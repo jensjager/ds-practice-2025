@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package transaction;
+
+service TransactionVerification {
+    rpc VerifyTransaction (TransactionVerificationRequest) returns (TransactionVerificationResponse);
+}
+
+message TransactionVerificationRequest {
+    string order_json = 1;
+}
+
+message TransactionVerificationResponse {
+    bool is_valid = 1;
+    string reason = 2;
+}

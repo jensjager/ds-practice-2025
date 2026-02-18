@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 
 # This set of lines are needed to import the gRPC stubs.
 # The path of the stubs is relative to the current file, or absolute inside the container.
@@ -13,25 +14,41 @@ import fraud_detection_pb2_grpc as fraud_detection_grpc
 import grpc
 from concurrent import futures
 
-# Create a class to define the server functions, derived from
-# fraud_detection_pb2_grpc.HelloServiceServicer
-class HelloService(fraud_detection_grpc.HelloServiceServicer):
-    # Create an RPC function to say hello
-    def SayHello(self, request, context):
-        # Create a HelloResponse object
-        response = fraud_detection.HelloResponse()
-        # Set the greeting field of the response object
-        response.greeting = "Hello, " + request.name
-        # Print the greeting message
-        print(response.greeting)
-        # Return the response object
+class FraudDetectionService(fraud_detection_grpc.FraudDetectionServicer):
+    def CheckFraud(self, request, context):
+        print("[fraud_detection] Request received")
+        response = fraud_detection.FraudCheckResponse()
+
+        try:
+            order = json.loads(request.order_json) if request.order_json else {}
+        except json.JSONDecodeError:
+            response.is_fraud = True
+            response.reason = "Invalid order payload."
+            return response
+
+        card_number = str(order.get("creditCard", {}).get("number", "")).replace(" ", "")
+        contact = str(order.get("user", {}).get("contact", "")).strip()
+        items = order.get("items", []) or []
+
+        reasons = []
+        if not contact:
+            reasons.append("Missing contact information")
+        if card_number.endswith("0000") or card_number.endswith("9999"):
+            reasons.append("Suspicious card number pattern")
+        if sum(item.get("quantity", 0) for item in items) > 100:
+            reasons.append("Unusually large order")
+
+        response.is_fraud = len(reasons) > 0
+        response.reason = "; ".join(reasons) if reasons else "No fraud detected"
+        print(
+            f"[fraud_detection] Result: is_fraud={response.is_fraud}, reason={response.reason}"
+        )
         return response
 
 def serve():
     # Create a gRPC server
     server = grpc.server(futures.ThreadPoolExecutor())
-    # Add HelloService
-    fraud_detection_grpc.add_HelloServiceServicer_to_server(HelloService(), server)
+    fraud_detection_grpc.add_FraudDetectionServicer_to_server(FraudDetectionService(), server)
     # Listen on port 50051
     port = "50051"
     server.add_insecure_port("[::]:" + port)

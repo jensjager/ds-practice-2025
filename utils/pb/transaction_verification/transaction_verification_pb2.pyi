@@ -4,16 +4,16 @@ from typing import ClassVar as _ClassVar, Optional as _Optional
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
-class FraudCheckRequest(_message.Message):
+class TransactionVerificationRequest(_message.Message):
     __slots__ = ("order_json",)
     ORDER_JSON_FIELD_NUMBER: _ClassVar[int]
     order_json: str
     def __init__(self, order_json: _Optional[str] = ...) -> None: ...
 
-class FraudCheckResponse(_message.Message):
-    __slots__ = ("is_fraud", "reason")
-    IS_FRAUD_FIELD_NUMBER: _ClassVar[int]
+class TransactionVerificationResponse(_message.Message):
+    __slots__ = ("is_valid", "reason")
+    IS_VALID_FIELD_NUMBER: _ClassVar[int]
     REASON_FIELD_NUMBER: _ClassVar[int]
-    is_fraud: bool
+    is_valid: bool
     reason: str
-    def __init__(self, is_fraud: bool = ..., reason: _Optional[str] = ...) -> None: ...
+    def __init__(self, is_valid: bool = ..., reason: _Optional[str] = ...) -> None: ...
