@@ -25,13 +25,15 @@ CATALOG = [
 
 class SuggestionsService(suggestions_grpc.SuggestionsServicer):
     def GetSuggestions(self, request, context):
-        print("[suggestions] Request received")
         response = suggestions.SuggestionsResponse()
 
         try:
             order = json.loads(request.order_json) if request.order_json else {}
         except json.JSONDecodeError:
             order = {}
+
+        order_id = str(order.get("orderId", "unknown")).strip() or "unknown"
+        print(f"[suggestions] Processing order_id={order_id}")
 
         items = order.get("items", []) or []
         ordered_titles = {str(item.get("name", "")).lower() for item in items}
@@ -54,7 +56,7 @@ class SuggestionsService(suggestions_grpc.SuggestionsServicer):
                 author=book["author"],
             )
 
-        print(f"[suggestions] Returning {len(response.books)} suggestions")
+        print(f"[suggestions] Returning {len(response.books)} suggestions for order_id={order_id}")
 
         return response
 

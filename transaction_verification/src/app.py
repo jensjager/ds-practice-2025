@@ -21,7 +21,6 @@ class TransactionVerificationService(
     transaction_verification_grpc.TransactionVerificationServicer
 ):
     def VerifyTransaction(self, request, context):
-        print("[transaction_verification] Request received")
         response = transaction_verification.TransactionVerificationResponse()
 
         try:
@@ -29,7 +28,11 @@ class TransactionVerificationService(
         except json.JSONDecodeError:
             response.is_valid = False
             response.reason = "Invalid order payload."
+            print("[transaction_verification] Invalid order payload received")
             return response
+
+        order_id = str(order.get("orderId", "unknown")).strip() or "unknown"
+        print(f"[transaction_verification] Processing order_id={order_id}")
 
         errors = []
         items = order.get("items", []) or []
@@ -57,7 +60,7 @@ class TransactionVerificationService(
         response.is_valid = len(errors) == 0
         response.reason = "Transaction verified" if response.is_valid else "; ".join(errors)
         print(
-            f"[transaction_verification] Result: is_valid={response.is_valid}, reason={response.reason}"
+            f"[transaction_verification] Result for order_id={order_id}: is_valid={response.is_valid}, reason={response.reason}"
         )
         return response
 

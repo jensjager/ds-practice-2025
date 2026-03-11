@@ -16,7 +16,6 @@ from concurrent import futures
 
 class FraudDetectionService(fraud_detection_grpc.FraudDetectionServicer):
     def CheckFraud(self, request, context):
-        print("[fraud_detection] Request received")
         response = fraud_detection.FraudCheckResponse()
 
         try:
@@ -24,7 +23,11 @@ class FraudDetectionService(fraud_detection_grpc.FraudDetectionServicer):
         except json.JSONDecodeError:
             response.is_fraud = True
             response.reason = "Invalid order payload."
+            print("[fraud_detection] Invalid order payload received")
             return response
+
+        order_id = str(order.get("orderId", "unknown")).strip() or "unknown"
+        print(f"[fraud_detection] Processing order_id={order_id}")
 
         card_number = str(order.get("creditCard", {}).get("number", "")).replace(" ", "")
         contact = str(order.get("user", {}).get("contact", "")).strip()
@@ -41,7 +44,7 @@ class FraudDetectionService(fraud_detection_grpc.FraudDetectionServicer):
         response.is_fraud = len(reasons) > 0
         response.reason = "; ".join(reasons) if reasons else "No fraud detected"
         print(
-            f"[fraud_detection] Result: is_fraud={response.is_fraud}, reason={response.reason}"
+            f"[fraud_detection] Result for order_id={order_id}: is_fraud={response.is_fraud}, reason={response.reason}"
         )
         return response
 

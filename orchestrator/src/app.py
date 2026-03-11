@@ -26,36 +26,30 @@ import suggestions_pb2_grpc as suggestions_grpc
 import grpc
 
 def check_fraud(order_json):
-    print("[orchestrator] Sending fraud check")
     with grpc.insecure_channel('fraud_detection:50051') as channel:
         stub = fraud_detection_grpc.FraudDetectionStub(channel)
         response = stub.CheckFraud(
             fraud_detection.FraudCheckRequest(order_json=order_json),
             timeout=3.0,
         )
-    print(f"[orchestrator] Fraud check result: is_fraud={response.is_fraud}")
     return response
 
 def verify_transaction(order_json):
-    print("[orchestrator] Sending transaction verification")
     with grpc.insecure_channel('transaction_verification:50052') as channel:
         stub = transaction_verification_grpc.TransactionVerificationStub(channel)
         response = stub.VerifyTransaction(
             transaction_verification.TransactionVerificationRequest(order_json=order_json),
             timeout=3.0,
         )
-    print(f"[orchestrator] Transaction verification result: is_valid={response.is_valid}")
     return response
 
 def get_suggestions(order_json):
-    print("[orchestrator] Requesting suggestions")
     with grpc.insecure_channel('suggestions:50053') as channel:
         stub = suggestions_grpc.SuggestionsStub(channel)
         response = stub.GetSuggestions(
             suggestions.SuggestionsRequest(order_json=order_json),
             timeout=3.0,
         )
-    print(f"[orchestrator] Suggestions received: count={len(response.books)}")
     return response
 
 # Import Flask.
@@ -97,7 +91,6 @@ def checkout():
     """
     Responds with a JSON object containing the order ID, status, and suggested books.
     """
-    print("[orchestrator] /checkout request received")
     try:
         request_data = request.get_json(force=True, silent=False)
     except Exception:
@@ -105,16 +98,15 @@ def checkout():
 
     validation_error = validate_request(request_data)
     if validation_error:
-        print(f"[orchestrator] Request validation failed: {validation_error}")
         return error_response(400, validation_error)
 
     order_id = str(uuid.uuid4())
     request_data["orderId"] = order_id
+    print(f"[orchestrator] Accepted checkout request for order_id={order_id}")
     order_json = json.dumps(request_data)
 
     try:
         with futures.ThreadPoolExecutor(max_workers=3) as executor:
-            print("[orchestrator] Spawning worker threads")
             fraud_future = executor.submit(check_fraud, order_json)
             transaction_future = executor.submit(verify_transaction, order_json)
             suggestions_future = executor.submit(get_suggestions, order_json)
@@ -123,13 +115,14 @@ def checkout():
             transaction_result = transaction_future.result()
             suggestions_result = suggestions_future.result()
     except grpc.RpcError as exc:
+        print(f"[orchestrator] Downstream gRPC failure for order_id={order_id}: {exc.code().name}")
         return error_response(500, f"gRPC error: {exc.code().name}")
     except Exception as exc:
+        print(f"[orchestrator] Unexpected failure for order_id={order_id}: {str(exc)}")
         return error_response(500, f"Unexpected error: {str(exc)}")
 
     approved = (not fraud_result.is_fraud) and transaction_result.is_valid
     status = "Order Approved" if approved else "Order Rejected"
-    print(f"[orchestrator] Decision computed: {status}")
 
     suggested_books = []
     if approved:
@@ -144,7 +137,9 @@ def checkout():
         "suggestedBooks": suggested_books,
     }
 
-    print("[orchestrator] Response ready for client")
+    print(
+        f"[orchestrator] Returning response for order_id={order_id}: status={status}, suggested_books={len(suggested_books)}"
+    )
 
     return jsonify(response)
 
