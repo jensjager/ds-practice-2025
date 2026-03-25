@@ -5,6 +5,9 @@ FROM python:3.11
 # Both the utils and src folders will be mounted as volumes, please see docker-compose.yaml
 WORKDIR /app
 
+# Set PYTHONPATH to include the app directory for absolute imports
+ENV PYTHONPATH=/app:$PYTHONPATH
+
 # Copy the requirements file to the working directory
 COPY ./orchestrator/requirements.txt .
 

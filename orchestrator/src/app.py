@@ -9,6 +9,8 @@ import grpc
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
+from utils.other.clock_utils import CLOCK_KEYS, empty_clock, merge_clocks, clock_from_proto, clock_to_log
+
 # This set of lines are needed to import the gRPC stubs.
 # The path of the stubs is relative to the current file, or absolute inside the container.
 # Change these lines only if strictly needed.
@@ -36,7 +38,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-CLOCK_KEYS = ("transaction_verification", "fraud_detection", "suggestions")
 RPC_TIMEOUT_SECONDS = 5.0
 SERVICE_CONFIG = {
     "transaction_verification": {
@@ -108,28 +109,10 @@ EVENT_FLOW = [
 ]
 
 
-def empty_clock():
-    return {key: 0 for key in CLOCK_KEYS}
-
-
-def merge_clocks(*clocks):
-    merged = empty_clock()
-    for clock in clocks:
-        if not clock:
-            continue
-        for key in CLOCK_KEYS:
-            merged[key] = max(merged[key], int(clock.get(key, 0)))
-    return merged
-
-
+# For compatibility with response message conversions
 def clock_from_message(clock_message):
-    if clock_message is None:
-        return empty_clock()
-    return {key: int(getattr(clock_message, key, 0)) for key in CLOCK_KEYS}
-
-
-def clock_to_log(clock):
-    return json.dumps(clock, sort_keys=True)
+    """Alias for clock_from_proto from shared utils."""
+    return clock_from_proto(clock_message)
 
 
 def make_vector_clock(service_name, clock):

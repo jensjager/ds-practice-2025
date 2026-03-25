@@ -7,6 +7,8 @@ from concurrent import futures
 
 import grpc
 
+from utils.other.clock_utils import CLOCK_KEYS, empty_clock, merge_clocks, clock_from_proto, clock_to_log, increment_clock
+
 # This set of lines are needed to import the gRPC stubs.
 # The path of the stubs is relative to the current file, or absolute inside the container.
 # Change these lines only if strictly needed.
@@ -22,7 +24,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-CLOCK_KEYS = ("transaction_verification", "fraud_detection", "suggestions")
 SERVICE_KEY = "suggestions"
 ORDER_STATES = {}
 STATE_LOCK = threading.Lock()
@@ -36,36 +37,8 @@ CATALOG = [
 ]
 
 
-def empty_clock():
-    return {key: 0 for key in CLOCK_KEYS}
-
-
-def clock_from_proto(clock):
-    if clock is None:
-        return empty_clock()
-    return {key: int(getattr(clock, key, 0)) for key in CLOCK_KEYS}
-
-
 def clock_to_proto(clock):
     return suggestions.VectorClock(**clock)
-
-
-def merge_clocks(*clocks):
-    merged = empty_clock()
-    for clock in clocks:
-        if not clock:
-            continue
-        for key in CLOCK_KEYS:
-            merged[key] = max(merged[key], int(clock.get(key, 0)))
-    return merged
-
-
-def increment_clock(clock):
-    clock[SERVICE_KEY] += 1
-
-
-def clock_to_log(clock):
-    return json.dumps(clock, sort_keys=True)
 
 
 def event_response(event_name, success, reason, clock):
@@ -115,7 +88,7 @@ class SuggestionsService(suggestions_grpc.SuggestionsServicer):
                 return False, "Order state not found.", empty_clock(), {}
 
             state["vector_clock"] = merge_clocks(state["vector_clock"], incoming_clock)
-            increment_clock(state["vector_clock"])
+            increment_clock(state["vector_clock"], SERVICE_KEY)
             current_clock = dict(state["vector_clock"])
             order = state["order"]
             prepared_books = list(state.get("prepared_books", []))
