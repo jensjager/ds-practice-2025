@@ -2,7 +2,7 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-import transaction_verification_pb2 as transaction__verification__pb2
+from utils.pb.transaction_verification import transaction_verification_pb2 as utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2
 
 
 class TransactionVerificationStub(object):
@@ -16,28 +16,28 @@ class TransactionVerificationStub(object):
         """
         self.InitOrder = channel.unary_unary(
                 '/transaction.TransactionVerification/InitOrder',
-                request_serializer=transaction__verification__pb2.OrderInitRequest.SerializeToString,
-                response_deserializer=transaction__verification__pb2.OrderInitResponse.FromString,
+                request_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.OrderInitRequest.SerializeToString,
+                response_deserializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.OrderInitResponse.FromString,
                 )
         self.ValidateItems = channel.unary_unary(
                 '/transaction.TransactionVerification/ValidateItems',
-                request_serializer=transaction__verification__pb2.EventRequest.SerializeToString,
-                response_deserializer=transaction__verification__pb2.EventResponse.FromString,
+                request_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.SerializeToString,
+                response_deserializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.FromString,
                 )
         self.ValidateUserData = channel.unary_unary(
                 '/transaction.TransactionVerification/ValidateUserData',
-                request_serializer=transaction__verification__pb2.EventRequest.SerializeToString,
-                response_deserializer=transaction__verification__pb2.EventResponse.FromString,
+                request_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.SerializeToString,
+                response_deserializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.FromString,
                 )
         self.ValidateCardFormat = channel.unary_unary(
                 '/transaction.TransactionVerification/ValidateCardFormat',
-                request_serializer=transaction__verification__pb2.EventRequest.SerializeToString,
-                response_deserializer=transaction__verification__pb2.EventResponse.FromString,
+                request_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.SerializeToString,
+                response_deserializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.FromString,
                 )
         self.ClearOrder = channel.unary_unary(
                 '/transaction.TransactionVerification/ClearOrder',
-                request_serializer=transaction__verification__pb2.ClearOrderRequest.SerializeToString,
-                response_deserializer=transaction__verification__pb2.ClearOrderResponse.FromString,
+                request_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.ClearOrderRequest.SerializeToString,
+                response_deserializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.ClearOrderResponse.FromString,
                 )
 
 
@@ -79,28 +79,28 @@ def add_TransactionVerificationServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'InitOrder': grpc.unary_unary_rpc_method_handler(
                     servicer.InitOrder,
-                    request_deserializer=transaction__verification__pb2.OrderInitRequest.FromString,
-                    response_serializer=transaction__verification__pb2.OrderInitResponse.SerializeToString,
+                    request_deserializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.OrderInitRequest.FromString,
+                    response_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.OrderInitResponse.SerializeToString,
             ),
             'ValidateItems': grpc.unary_unary_rpc_method_handler(
                     servicer.ValidateItems,
-                    request_deserializer=transaction__verification__pb2.EventRequest.FromString,
-                    response_serializer=transaction__verification__pb2.EventResponse.SerializeToString,
+                    request_deserializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.FromString,
+                    response_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.SerializeToString,
             ),
             'ValidateUserData': grpc.unary_unary_rpc_method_handler(
                     servicer.ValidateUserData,
-                    request_deserializer=transaction__verification__pb2.EventRequest.FromString,
-                    response_serializer=transaction__verification__pb2.EventResponse.SerializeToString,
+                    request_deserializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.FromString,
+                    response_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.SerializeToString,
             ),
             'ValidateCardFormat': grpc.unary_unary_rpc_method_handler(
                     servicer.ValidateCardFormat,
-                    request_deserializer=transaction__verification__pb2.EventRequest.FromString,
-                    response_serializer=transaction__verification__pb2.EventResponse.SerializeToString,
+                    request_deserializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.FromString,
+                    response_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.SerializeToString,
             ),
             'ClearOrder': grpc.unary_unary_rpc_method_handler(
                     servicer.ClearOrder,
-                    request_deserializer=transaction__verification__pb2.ClearOrderRequest.FromString,
-                    response_serializer=transaction__verification__pb2.ClearOrderResponse.SerializeToString,
+                    request_deserializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.ClearOrderRequest.FromString,
+                    response_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.ClearOrderResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -124,8 +124,8 @@ class TransactionVerification(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/transaction.TransactionVerification/InitOrder',
-            transaction__verification__pb2.OrderInitRequest.SerializeToString,
-            transaction__verification__pb2.OrderInitResponse.FromString,
+            utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.OrderInitRequest.SerializeToString,
+            utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.OrderInitResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -141,8 +141,8 @@ class TransactionVerification(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/transaction.TransactionVerification/ValidateItems',
-            transaction__verification__pb2.EventRequest.SerializeToString,
-            transaction__verification__pb2.EventResponse.FromString,
+            utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.SerializeToString,
+            utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -158,8 +158,8 @@ class TransactionVerification(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/transaction.TransactionVerification/ValidateUserData',
-            transaction__verification__pb2.EventRequest.SerializeToString,
-            transaction__verification__pb2.EventResponse.FromString,
+            utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.SerializeToString,
+            utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -175,8 +175,8 @@ class TransactionVerification(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/transaction.TransactionVerification/ValidateCardFormat',
-            transaction__verification__pb2.EventRequest.SerializeToString,
-            transaction__verification__pb2.EventResponse.FromString,
+            utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.SerializeToString,
+            utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -192,7 +192,7 @@ class TransactionVerification(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/transaction.TransactionVerification/ClearOrder',
-            transaction__verification__pb2.ClearOrderRequest.SerializeToString,
-            transaction__verification__pb2.ClearOrderResponse.FromString,
+            utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.ClearOrderRequest.SerializeToString,
+            utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.ClearOrderResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

@@ -2,7 +2,7 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-import fraud_detection_pb2 as fraud__detection__pb2
+from utils.pb.fraud_detection import fraud_detection_pb2 as utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2
 
 
 class FraudDetectionStub(object):
@@ -16,23 +16,23 @@ class FraudDetectionStub(object):
         """
         self.InitOrder = channel.unary_unary(
                 '/fraud.FraudDetection/InitOrder',
-                request_serializer=fraud__detection__pb2.OrderInitRequest.SerializeToString,
-                response_deserializer=fraud__detection__pb2.OrderInitResponse.FromString,
+                request_serializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.OrderInitRequest.SerializeToString,
+                response_deserializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.OrderInitResponse.FromString,
                 )
         self.CheckUserFraud = channel.unary_unary(
                 '/fraud.FraudDetection/CheckUserFraud',
-                request_serializer=fraud__detection__pb2.EventRequest.SerializeToString,
-                response_deserializer=fraud__detection__pb2.EventResponse.FromString,
+                request_serializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.EventRequest.SerializeToString,
+                response_deserializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.EventResponse.FromString,
                 )
         self.CheckCardFraud = channel.unary_unary(
                 '/fraud.FraudDetection/CheckCardFraud',
-                request_serializer=fraud__detection__pb2.EventRequest.SerializeToString,
-                response_deserializer=fraud__detection__pb2.EventResponse.FromString,
+                request_serializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.EventRequest.SerializeToString,
+                response_deserializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.EventResponse.FromString,
                 )
         self.ClearOrder = channel.unary_unary(
                 '/fraud.FraudDetection/ClearOrder',
-                request_serializer=fraud__detection__pb2.ClearOrderRequest.SerializeToString,
-                response_deserializer=fraud__detection__pb2.ClearOrderResponse.FromString,
+                request_serializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.ClearOrderRequest.SerializeToString,
+                response_deserializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.ClearOrderResponse.FromString,
                 )
 
 
@@ -68,23 +68,23 @@ def add_FraudDetectionServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'InitOrder': grpc.unary_unary_rpc_method_handler(
                     servicer.InitOrder,
-                    request_deserializer=fraud__detection__pb2.OrderInitRequest.FromString,
-                    response_serializer=fraud__detection__pb2.OrderInitResponse.SerializeToString,
+                    request_deserializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.OrderInitRequest.FromString,
+                    response_serializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.OrderInitResponse.SerializeToString,
             ),
             'CheckUserFraud': grpc.unary_unary_rpc_method_handler(
                     servicer.CheckUserFraud,
-                    request_deserializer=fraud__detection__pb2.EventRequest.FromString,
-                    response_serializer=fraud__detection__pb2.EventResponse.SerializeToString,
+                    request_deserializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.EventRequest.FromString,
+                    response_serializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.EventResponse.SerializeToString,
             ),
             'CheckCardFraud': grpc.unary_unary_rpc_method_handler(
                     servicer.CheckCardFraud,
-                    request_deserializer=fraud__detection__pb2.EventRequest.FromString,
-                    response_serializer=fraud__detection__pb2.EventResponse.SerializeToString,
+                    request_deserializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.EventRequest.FromString,
+                    response_serializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.EventResponse.SerializeToString,
             ),
             'ClearOrder': grpc.unary_unary_rpc_method_handler(
                     servicer.ClearOrder,
-                    request_deserializer=fraud__detection__pb2.ClearOrderRequest.FromString,
-                    response_serializer=fraud__detection__pb2.ClearOrderResponse.SerializeToString,
+                    request_deserializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.ClearOrderRequest.FromString,
+                    response_serializer=utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.ClearOrderResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -108,8 +108,8 @@ class FraudDetection(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/fraud.FraudDetection/InitOrder',
-            fraud__detection__pb2.OrderInitRequest.SerializeToString,
-            fraud__detection__pb2.OrderInitResponse.FromString,
+            utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.OrderInitRequest.SerializeToString,
+            utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.OrderInitResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -125,8 +125,8 @@ class FraudDetection(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/fraud.FraudDetection/CheckUserFraud',
-            fraud__detection__pb2.EventRequest.SerializeToString,
-            fraud__detection__pb2.EventResponse.FromString,
+            utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.EventRequest.SerializeToString,
+            utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.EventResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -142,8 +142,8 @@ class FraudDetection(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/fraud.FraudDetection/CheckCardFraud',
-            fraud__detection__pb2.EventRequest.SerializeToString,
-            fraud__detection__pb2.EventResponse.FromString,
+            utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.EventRequest.SerializeToString,
+            utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.EventResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -159,7 +159,7 @@ class FraudDetection(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/fraud.FraudDetection/ClearOrder',
-            fraud__detection__pb2.ClearOrderRequest.SerializeToString,
-            fraud__detection__pb2.ClearOrderResponse.FromString,
+            utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.ClearOrderRequest.SerializeToString,
+            utils_dot_pb_dot_fraud__detection_dot_fraud__detection__pb2.ClearOrderResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import sys
 import uuid
 from concurrent.futures import CancelledError, FIRST_COMPLETED, ThreadPoolExecutor, wait
 
@@ -9,21 +8,16 @@ import grpc
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from utils.other.clock_utils import CLOCK_KEYS, empty_clock, merge_clocks, clock_from_proto, clock_to_log
+from utils.other.clock_utils import empty_clock, merge_clocks, clock_from_proto, clock_to_log
+from utils.other.runtime_utils import add_grpc_path, env_float, setup_logging
 
 # This set of lines are needed to import the gRPC stubs.
 # The path of the stubs is relative to the current file, or absolute inside the container.
 # Change these lines only if strictly needed.
 FILE = __file__ if '__file__' in globals() else os.getenv("PYTHONFILE", "")
-
-
-def add_grpc_path(relative_path):
-    sys.path.insert(0, os.path.abspath(os.path.join(FILE, relative_path)))
-
-
-add_grpc_path('../../../utils/pb/fraud_detection')
-add_grpc_path('../../../utils/pb/transaction_verification')
-add_grpc_path('../../../utils/pb/suggestions')
+add_grpc_path(FILE, '../../../utils/pb/fraud_detection')
+add_grpc_path(FILE, '../../../utils/pb/transaction_verification')
+add_grpc_path(FILE, '../../../utils/pb/suggestions')
 
 import fraud_detection_pb2 as fraud_detection
 import fraud_detection_pb2_grpc as fraud_detection_grpc
@@ -32,30 +26,33 @@ import suggestions_pb2_grpc as suggestions_grpc
 import transaction_verification_pb2 as transaction_verification
 import transaction_verification_pb2_grpc as transaction_verification_grpc
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s %(levelname)s %(message)s",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
-RPC_TIMEOUT_SECONDS = 5.0
-SERVICE_CONFIG = {
-    "transaction_verification": {
-        "target": "transaction_verification:50052",
-        "stub_class": transaction_verification_grpc.TransactionVerificationStub,
-        "module": transaction_verification,
-    },
-    "fraud_detection": {
-        "target": "fraud_detection:50051",
-        "stub_class": fraud_detection_grpc.FraudDetectionStub,
-        "module": fraud_detection,
-    },
-    "suggestions": {
-        "target": "suggestions:50053",
-        "stub_class": suggestions_grpc.SuggestionsStub,
-        "module": suggestions,
-    },
-}
+RPC_TIMEOUT_SECONDS = env_float("RPC_TIMEOUT_SECONDS", 5.0)
+
+
+def build_service_config():
+    return {
+        "transaction_verification": {
+            "target": os.getenv("TRANSACTION_VERIFICATION_TARGET", "transaction_verification:50052"),
+            "stub_class": transaction_verification_grpc.TransactionVerificationStub,
+            "module": transaction_verification,
+        },
+        "fraud_detection": {
+            "target": os.getenv("FRAUD_DETECTION_TARGET", "fraud_detection:50051"),
+            "stub_class": fraud_detection_grpc.FraudDetectionStub,
+            "module": fraud_detection,
+        },
+        "suggestions": {
+            "target": os.getenv("SUGGESTIONS_TARGET", "suggestions:50053"),
+            "stub_class": suggestions_grpc.SuggestionsStub,
+            "module": suggestions,
+        },
+    }
+
+
+SERVICE_CONFIG = build_service_config()
 EVENT_FLOW = [
     {
         "name": "validate_items",
@@ -325,6 +322,11 @@ CORS(app, resources={r'/*': {'origins': '*'}})
 @app.route('/', methods=['GET'])
 def index():
     return "Orchestrator is running."
+
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "ok"})
 
 
 def error_response(code, message):

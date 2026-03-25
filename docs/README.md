@@ -45,6 +45,7 @@ Concurrency is present by design (for example, `validate_items` and `validate_us
 
 ## Backend State Caching
 Each backend service caches per-order data in memory, keyed by `orderId`. On `InitOrder`, a service stores the order payload and initializes local state including the vector clock. Event RPC handlers merge incoming clocks, increment their local component, execute dummy logic, and return the updated clock.
+Cached order state is periodically pruned with TTL settings (`ORDER_STATE_TTL_SECONDS`, `ORDER_STATE_CLEANUP_INTERVAL_SECONDS`) to avoid unbounded growth.
 
 ## Failure Propagation and Cleanup
 - If an event fails (business validation or fraud check), the orchestrator immediately marks the checkout as failed, cancels pending work, and returns `Order Rejected`.
@@ -65,9 +66,11 @@ Relevant logs are added in all services to track initialization, event execution
 2. Build and start the services using the `docker-compose` file:
    ```sh
    docker compose up
-    ```
+   ```
 
-## Architecure Diagram
+The orchestrator includes `GET /health`, and Docker Compose uses healthchecks for service startup ordering.
+
+## Architecture Diagram
 
 <img src="architecture.png">
 

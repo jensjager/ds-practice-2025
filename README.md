@@ -28,6 +28,8 @@ If, for some reason, changes to the code are not reflected, try to force rebuild
 docker compose up --build
 ```
 
+The Compose setup now includes service healthchecks and startup dependencies. The orchestrator exposes a health endpoint at `GET /health` on port `5000` in the container (mapped to `8081` on host).
+
 ### Run the code locally
 
 Even though you can run the code locally, it is recommended to use Docker and Docker Compose to run the code. This way you don't have to install any dependencies locally and you can easily run the code on any platform.
@@ -37,8 +39,11 @@ If you want to run the code locally, you need to install the following dependenc
 backend services:
 - Python 3.8 or newer
 - pip
-- [grpcio-tools](https://grpc.io/docs/languages/python/quickstart/)
 - requirements.txt dependencies from each service
+
+Notes:
+- `grpcio-tools` is not required at runtime. Install it only when regenerating protobuf files.
+- Order state cleanup is configurable via `ORDER_STATE_TTL_SECONDS` and `ORDER_STATE_CLEANUP_INTERVAL_SECONDS` in backend services.
 
 frontend service:
 - It's a simple static HTML page, you can open `frontend/src/index.html` in your browser.

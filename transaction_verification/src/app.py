@@ -2,34 +2,37 @@ import json
 import logging
 import os
 import re
-import sys
 import threading
 from concurrent import futures
 
 import grpc
 
-from utils.other.clock_utils import CLOCK_KEYS, empty_clock, merge_clocks, clock_from_proto, clock_to_log, increment_clock
+from utils.other.clock_utils import empty_clock, merge_clocks, clock_from_proto, clock_to_log
+from utils.other.order_state import (
+    clear_order_if_safe,
+    record_event_result,
+    set_state,
+    start_cleanup_thread,
+    update_for_event,
+)
+from utils.other.runtime_utils import add_grpc_path, env_float, setup_logging
 
 # This set of lines are needed to import the gRPC stubs.
 # The path of the stubs is relative to the current file, or absolute inside the container.
 # Change these lines only if strictly needed.
 FILE = __file__ if '__file__' in globals() else os.getenv("PYTHONFILE", "")
-transaction_grpc_path = os.path.abspath(
-    os.path.join(FILE, '../../../utils/pb/transaction_verification')
-)
-sys.path.insert(0, transaction_grpc_path)
+add_grpc_path(FILE, '../../../utils/pb/transaction_verification')
 import transaction_verification_pb2 as transaction_verification
 import transaction_verification_pb2_grpc as transaction_verification_grpc
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s %(levelname)s %(message)s",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 SERVICE_KEY = "transaction_verification"
 ORDER_STATES = {}
 STATE_LOCK = threading.Lock()
+STATE_TTL_SECONDS = env_float("ORDER_STATE_TTL_SECONDS", 900.0)
+STATE_CLEANUP_INTERVAL_SECONDS = env_float("ORDER_STATE_CLEANUP_INTERVAL_SECONDS", 30.0)
 
 
 def clock_to_proto(clock):
@@ -62,13 +65,16 @@ class TransactionVerificationService(
         order_id = request.order_id.strip() or str(order.get("orderId", "unknown")).strip()
         initial_clock = merge_clocks(clock_from_proto(request.vector_clock))
 
-        with STATE_LOCK:
-            ORDER_STATES[order_id] = {
+        set_state(
+            ORDER_STATES,
+            STATE_LOCK,
+            order_id,
+            {
                 "order": order,
                 "vector_clock": initial_clock,
                 "events": {},
-                "failed": False,
-            }
+            },
+        )
 
         logger.info("Cached order_id=%s vc=%s", order_id, clock_to_log(initial_clock))
         return transaction_verification.OrderInitResponse(
@@ -78,26 +84,26 @@ class TransactionVerificationService(
         )
 
     def _execute_event(self, order_id, incoming_clock, event_name, handler):
-        with STATE_LOCK:
-            state = ORDER_STATES.get(order_id)
-            if state is None:
-                return event_response(event_name, False, "Order state not found.", empty_clock())
+        event_state = update_for_event(ORDER_STATES, STATE_LOCK, order_id, incoming_clock, SERVICE_KEY)
+        if event_state is None:
+            return event_response(event_name, False, "Order state not found.", empty_clock())
 
-            state["vector_clock"] = merge_clocks(state["vector_clock"], incoming_clock)
-            increment_clock(state["vector_clock"], SERVICE_KEY)
-            current_clock = dict(state["vector_clock"])
-            order = state["order"]
+        current_clock = event_state["vector_clock"]
+        order = event_state["order"]
 
         logger.info("order_id=%s event=%s vc=%s", order_id, event_name, clock_to_log(current_clock))
         success, reason = handler(order)
 
-        with STATE_LOCK:
-            state = ORDER_STATES.get(order_id)
-            if state is not None:
-                state["events"][event_name] = {"success": success, "reason": reason}
-                if not success:
-                    state["failed"] = True
-                current_clock = dict(state["vector_clock"])
+        persisted_clock = record_event_result(
+            ORDER_STATES,
+            STATE_LOCK,
+            order_id,
+            event_name,
+            success,
+            reason,
+        )
+        if persisted_clock is not None:
+            current_clock = persisted_clock
 
         logger.info(
             "order_id=%s event=%s success=%s reason=%s",
@@ -136,26 +142,26 @@ class TransactionVerificationService(
         order_id = request.order_id
         final_clock = clock_from_proto(request.final_vector_clock)
 
-        with STATE_LOCK:
-            state = ORDER_STATES.get(order_id)
-            if state is None:
-                logger.info("Cleanup skipped for order_id=%s: already cleared", order_id)
-                return transaction_verification.ClearOrderResponse(
-                    success=True,
-                    reason="Order state already cleared.",
-                    vector_clock=clock_to_proto(empty_clock()),
-                )
+        is_safe_to_clear, reason, local_clock = clear_order_if_safe(
+            ORDER_STATES,
+            STATE_LOCK,
+            order_id,
+            final_clock,
+        )
 
-            local_clock = dict(state["vector_clock"])
-            is_safe_to_clear = all(local_clock[key] <= final_clock[key] for key in CLOCK_KEYS)
-            if is_safe_to_clear:
-                del ORDER_STATES[order_id]
+        if local_clock is None:
+            logger.info("Cleanup skipped for order_id=%s: already cleared", order_id)
+            return transaction_verification.ClearOrderResponse(
+                success=True,
+                reason=reason,
+                vector_clock=clock_to_proto(empty_clock()),
+            )
 
         if is_safe_to_clear:
             logger.info("Cleared order_id=%s final_vc=%s", order_id, clock_to_log(final_clock))
             return transaction_verification.ClearOrderResponse(
                 success=True,
-                reason="Order state cleared.",
+                reason=reason,
                 vector_clock=clock_to_proto(local_clock),
             )
 
@@ -167,7 +173,7 @@ class TransactionVerificationService(
         )
         return transaction_verification.ClearOrderResponse(
             success=False,
-            reason="Local vector clock is ahead of the final vector clock.",
+            reason=reason,
             vector_clock=clock_to_proto(local_clock),
         )
 
@@ -215,6 +221,14 @@ class TransactionVerificationService(
 
 
 def serve():
+    start_cleanup_thread(
+        ORDER_STATES,
+        STATE_LOCK,
+        STATE_TTL_SECONDS,
+        STATE_CLEANUP_INTERVAL_SECONDS,
+        logger,
+        SERVICE_KEY,
+    )
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     transaction_verification_grpc.add_TransactionVerificationServicer_to_server(
         TransactionVerificationService(),
