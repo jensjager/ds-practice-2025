@@ -3,14 +3,50 @@ syntax = "proto3";
 package transaction;
 
 service TransactionVerification {
-    rpc VerifyTransaction (TransactionVerificationRequest) returns (TransactionVerificationResponse);
+    rpc InitOrder (OrderInitRequest) returns (OrderInitResponse);
+    rpc ValidateItems (EventRequest) returns (EventResponse);
+    rpc ValidateUserData (EventRequest) returns (EventResponse);
+    rpc ValidateCardFormat (EventRequest) returns (EventResponse);
+    rpc ClearOrder (ClearOrderRequest) returns (ClearOrderResponse);
 }
 
-message TransactionVerificationRequest {
-    string order_json = 1;
+message VectorClock {
+    int32 transaction_verification = 1;
+    int32 fraud_detection = 2;
+    int32 suggestions = 3;
 }
 
-message TransactionVerificationResponse {
-    bool is_valid = 1;
+message OrderInitRequest {
+    string order_id = 1;
+    string order_json = 2;
+    VectorClock vector_clock = 3;
+}
+
+message OrderInitResponse {
+    bool success = 1;
     string reason = 2;
+    VectorClock vector_clock = 3;
+}
+
+message EventRequest {
+    string order_id = 1;
+    VectorClock vector_clock = 2;
+}
+
+message EventResponse {
+    bool success = 1;
+    string reason = 2;
+    string event_name = 3;
+    VectorClock vector_clock = 4;
+}
+
+message ClearOrderRequest {
+    string order_id = 1;
+    VectorClock final_vector_clock = 2;
+}
+
+message ClearOrderResponse {
+    bool success = 1;
+    string reason = 2;
+    VectorClock vector_clock = 3;
 }

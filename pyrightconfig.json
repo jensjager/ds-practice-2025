@@ -1,0 +1,15 @@
+{
+  "include": [
+    "orchestrator/src",
+    "fraud_detection/src",
+    "transaction_verification/src",
+    "suggestions/src"
+  ],
+  "extraPaths": [
+    "utils/pb/fraud_detection",
+    "utils/pb/transaction_verification",
+    "utils/pb/suggestions"
+  ],
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none"
+}
