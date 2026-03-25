@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import sys
 import uuid
@@ -29,40 +30,81 @@ import suggestions_pb2_grpc as suggestions_grpc
 import transaction_verification_pb2 as transaction_verification
 import transaction_verification_pb2_grpc as transaction_verification_grpc
 
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 CLOCK_KEYS = ("transaction_verification", "fraud_detection", "suggestions")
+RPC_TIMEOUT_SECONDS = 5.0
+SERVICE_CONFIG = {
+    "transaction_verification": {
+        "target": "transaction_verification:50052",
+        "stub_class": transaction_verification_grpc.TransactionVerificationStub,
+        "module": transaction_verification,
+    },
+    "fraud_detection": {
+        "target": "fraud_detection:50051",
+        "stub_class": fraud_detection_grpc.FraudDetectionStub,
+        "module": fraud_detection,
+    },
+    "suggestions": {
+        "target": "suggestions:50053",
+        "stub_class": suggestions_grpc.SuggestionsStub,
+        "module": suggestions,
+    },
+}
 EVENT_FLOW = [
-    ("validate_items", [], "Validate items", lambda order_id, clock: validate_items(order_id, clock)),
-    ("validate_user_data", [], "Validate user data", lambda order_id, clock: validate_user_data(order_id, clock)),
-    (
-        "validate_card_format",
-        ["validate_items"],
-        "Validate card format",
-        lambda order_id, clock: validate_card_format(order_id, clock),
-    ),
-    (
-        "prepare_suggestions_context",
-        ["validate_items"],
-        "Prepare suggestions context",
-        lambda order_id, clock: prepare_suggestions_context(order_id, clock),
-    ),
-    (
-        "check_user_fraud",
-        ["validate_user_data"],
-        "Check user fraud",
-        lambda order_id, clock: check_user_fraud(order_id, clock),
-    ),
-    (
-        "check_card_fraud",
-        ["validate_card_format", "check_user_fraud"],
-        "Check card fraud",
-        lambda order_id, clock: check_card_fraud(order_id, clock),
-    ),
-    (
-        "generate_suggestions",
-        ["prepare_suggestions_context", "check_card_fraud"],
-        "Generate suggestions",
-        lambda order_id, clock: generate_suggestions(order_id, clock),
-    ),
+    {
+        "name": "validate_items",
+        "deps": [],
+        "label": "Validate items",
+        "service": "transaction_verification",
+        "method": "ValidateItems",
+    },
+    {
+        "name": "validate_user_data",
+        "deps": [],
+        "label": "Validate user data",
+        "service": "transaction_verification",
+        "method": "ValidateUserData",
+    },
+    {
+        "name": "validate_card_format",
+        "deps": ["validate_items"],
+        "label": "Validate card format",
+        "service": "transaction_verification",
+        "method": "ValidateCardFormat",
+    },
+    {
+        "name": "prepare_suggestions_context",
+        "deps": ["validate_items"],
+        "label": "Prepare suggestions context",
+        "service": "suggestions",
+        "method": "PrepareSuggestionsContext",
+    },
+    {
+        "name": "check_user_fraud",
+        "deps": ["validate_user_data"],
+        "label": "Check user fraud",
+        "service": "fraud_detection",
+        "method": "CheckUserFraud",
+    },
+    {
+        "name": "check_card_fraud",
+        "deps": ["validate_card_format", "check_user_fraud"],
+        "label": "Check card fraud",
+        "service": "fraud_detection",
+        "method": "CheckCardFraud",
+    },
+    {
+        "name": "generate_suggestions",
+        "deps": ["prepare_suggestions_context", "check_card_fraud"],
+        "label": "Generate suggestions",
+        "service": "suggestions",
+        "method": "GenerateSuggestions",
+    },
 ]
 
 
@@ -90,162 +132,52 @@ def clock_to_log(clock):
     return json.dumps(clock, sort_keys=True)
 
 
-def tx_clock(clock):
-    return transaction_verification.VectorClock(**clock)
+def make_vector_clock(service_name, clock):
+    service_module = SERVICE_CONFIG[service_name]["module"]
+    return service_module.VectorClock(**clock)
 
 
-def fraud_clock(clock):
-    return fraud_detection.VectorClock(**clock)
+def call_service_rpc(service_name, method_name, request):
+    service = SERVICE_CONFIG[service_name]
+    with grpc.insecure_channel(service["target"]) as channel:
+        stub = service["stub_class"](channel)
+        method = getattr(stub, method_name)
+        return method(request, timeout=RPC_TIMEOUT_SECONDS)
 
 
-def suggestions_clock(clock):
-    return suggestions.VectorClock(**clock)
+def init_order(service_name, order_id, order_json, clock):
+    service_module = SERVICE_CONFIG[service_name]["module"]
+    request = service_module.OrderInitRequest(
+        order_id=order_id,
+        order_json=order_json,
+        vector_clock=make_vector_clock(service_name, clock),
+    )
+    return call_service_rpc(service_name, "InitOrder", request)
 
 
-def init_transaction_order(order_id, order_json, clock):
-    with grpc.insecure_channel('transaction_verification:50052') as channel:
-        stub = transaction_verification_grpc.TransactionVerificationStub(channel)
-        return stub.InitOrder(
-            transaction_verification.OrderInitRequest(
-                order_id=order_id,
-                order_json=order_json,
-                vector_clock=tx_clock(clock),
-            ),
-            timeout=5.0,
-        )
+def execute_event(service_name, method_name, order_id, clock):
+    service_module = SERVICE_CONFIG[service_name]["module"]
+    request = service_module.EventRequest(
+        order_id=order_id,
+        vector_clock=make_vector_clock(service_name, clock),
+    )
+    return call_service_rpc(service_name, method_name, request)
 
 
-def init_fraud_order(order_id, order_json, clock):
-    with grpc.insecure_channel('fraud_detection:50051') as channel:
-        stub = fraud_detection_grpc.FraudDetectionStub(channel)
-        return stub.InitOrder(
-            fraud_detection.OrderInitRequest(
-                order_id=order_id,
-                order_json=order_json,
-                vector_clock=fraud_clock(clock),
-            ),
-            timeout=5.0,
-        )
-
-
-def init_suggestions_order(order_id, order_json, clock):
-    with grpc.insecure_channel('suggestions:50053') as channel:
-        stub = suggestions_grpc.SuggestionsStub(channel)
-        return stub.InitOrder(
-            suggestions.OrderInitRequest(
-                order_id=order_id,
-                order_json=order_json,
-                vector_clock=suggestions_clock(clock),
-            ),
-            timeout=5.0,
-        )
-
-
-def validate_items(order_id, clock):
-    with grpc.insecure_channel('transaction_verification:50052') as channel:
-        stub = transaction_verification_grpc.TransactionVerificationStub(channel)
-        return stub.ValidateItems(
-            transaction_verification.EventRequest(order_id=order_id, vector_clock=tx_clock(clock)),
-            timeout=5.0,
-        )
-
-
-def validate_user_data(order_id, clock):
-    with grpc.insecure_channel('transaction_verification:50052') as channel:
-        stub = transaction_verification_grpc.TransactionVerificationStub(channel)
-        return stub.ValidateUserData(
-            transaction_verification.EventRequest(order_id=order_id, vector_clock=tx_clock(clock)),
-            timeout=5.0,
-        )
-
-
-def validate_card_format(order_id, clock):
-    with grpc.insecure_channel('transaction_verification:50052') as channel:
-        stub = transaction_verification_grpc.TransactionVerificationStub(channel)
-        return stub.ValidateCardFormat(
-            transaction_verification.EventRequest(order_id=order_id, vector_clock=tx_clock(clock)),
-            timeout=5.0,
-        )
-
-
-def check_user_fraud(order_id, clock):
-    with grpc.insecure_channel('fraud_detection:50051') as channel:
-        stub = fraud_detection_grpc.FraudDetectionStub(channel)
-        return stub.CheckUserFraud(
-            fraud_detection.EventRequest(order_id=order_id, vector_clock=fraud_clock(clock)),
-            timeout=5.0,
-        )
-
-
-def check_card_fraud(order_id, clock):
-    with grpc.insecure_channel('fraud_detection:50051') as channel:
-        stub = fraud_detection_grpc.FraudDetectionStub(channel)
-        return stub.CheckCardFraud(
-            fraud_detection.EventRequest(order_id=order_id, vector_clock=fraud_clock(clock)),
-            timeout=5.0,
-        )
-
-
-def prepare_suggestions_context(order_id, clock):
-    with grpc.insecure_channel('suggestions:50053') as channel:
-        stub = suggestions_grpc.SuggestionsStub(channel)
-        return stub.PrepareSuggestionsContext(
-            suggestions.EventRequest(order_id=order_id, vector_clock=suggestions_clock(clock)),
-            timeout=5.0,
-        )
-
-
-def generate_suggestions(order_id, clock):
-    with grpc.insecure_channel('suggestions:50053') as channel:
-        stub = suggestions_grpc.SuggestionsStub(channel)
-        return stub.GenerateSuggestions(
-            suggestions.EventRequest(order_id=order_id, vector_clock=suggestions_clock(clock)),
-            timeout=5.0,
-        )
-
-
-def clear_transaction_order(order_id, clock):
-    with grpc.insecure_channel('transaction_verification:50052') as channel:
-        stub = transaction_verification_grpc.TransactionVerificationStub(channel)
-        return stub.ClearOrder(
-            transaction_verification.ClearOrderRequest(
-                order_id=order_id,
-                final_vector_clock=tx_clock(clock),
-            ),
-            timeout=5.0,
-        )
-
-
-def clear_fraud_order(order_id, clock):
-    with grpc.insecure_channel('fraud_detection:50051') as channel:
-        stub = fraud_detection_grpc.FraudDetectionStub(channel)
-        return stub.ClearOrder(
-            fraud_detection.ClearOrderRequest(
-                order_id=order_id,
-                final_vector_clock=fraud_clock(clock),
-            ),
-            timeout=5.0,
-        )
-
-
-def clear_suggestions_order(order_id, clock):
-    with grpc.insecure_channel('suggestions:50053') as channel:
-        stub = suggestions_grpc.SuggestionsStub(channel)
-        return stub.ClearOrder(
-            suggestions.ClearOrderRequest(
-                order_id=order_id,
-                final_vector_clock=suggestions_clock(clock),
-            ),
-            timeout=5.0,
-        )
+def clear_order(service_name, order_id, clock):
+    service_module = SERVICE_CONFIG[service_name]["module"]
+    request = service_module.ClearOrderRequest(
+        order_id=order_id,
+        final_vector_clock=make_vector_clock(service_name, clock),
+    )
+    return call_service_rpc(service_name, "ClearOrder", request)
 
 
 def initialize_order(order_id, order_json):
     initial_clock = empty_clock()
     init_calls = {
-        "transaction_verification": lambda: init_transaction_order(order_id, order_json, initial_clock),
-        "fraud_detection": lambda: init_fraud_order(order_id, order_json, initial_clock),
-        "suggestions": lambda: init_suggestions_order(order_id, order_json, initial_clock),
+        service_name: (lambda service_name=service_name: init_order(service_name, order_id, order_json, initial_clock))
+        for service_name in SERVICE_CONFIG
     }
 
     with ThreadPoolExecutor(max_workers=3) as executor:
@@ -259,14 +191,13 @@ def initialize_order(order_id, order_json):
             if not response.success:
                 raise RuntimeError(f"{service_name} init failed: {response.reason}")
 
-    print(f"[orchestrator] Initialized backend state for order_id={order_id}")
+    logger.info("Initialized backend state for order_id=%s", order_id)
 
 
 def broadcast_cleanup(order_id, final_clock):
     cleanup_calls = {
-        "transaction_verification": lambda: clear_transaction_order(order_id, final_clock),
-        "fraud_detection": lambda: clear_fraud_order(order_id, final_clock),
-        "suggestions": lambda: clear_suggestions_order(order_id, final_clock),
+        service_name: (lambda service_name=service_name: clear_order(service_name, order_id, final_clock))
+        for service_name in SERVICE_CONFIG
     }
 
     with ThreadPoolExecutor(max_workers=3) as executor:
@@ -274,22 +205,25 @@ def broadcast_cleanup(order_id, final_clock):
         for future, service_name in list(future_map.items()):
             try:
                 response = future.result()
-                print(
-                    f"[orchestrator] Cleanup service={service_name} order_id={order_id} success={response.success} reason={response.reason}"
+                logger.info(
+                    "Cleanup service=%s order_id=%s success=%s reason=%s",
+                    service_name,
+                    order_id,
+                    response.success,
+                    response.reason,
                 )
             except grpc.RpcError as exc:
-                print(
-                    f"[orchestrator] Cleanup gRPC failure service={service_name} order_id={order_id} code={exc.code().name}"
+                logger.error(
+                    "Cleanup gRPC failure service=%s order_id=%s code=%s",
+                    service_name,
+                    order_id,
+                    exc.code().name,
                 )
 
 
 def run_event_flow(order_id, order_json):
     initialize_order(order_id, order_json)
 
-    event_definitions = {
-        name: {"deps": deps, "label": label, "call": call}
-        for name, deps, label, call in EVENT_FLOW
-    }
     completed_events = set()
     scheduled_events = set()
     pending_futures = {}
@@ -300,16 +234,28 @@ def run_event_flow(order_id, order_json):
 
     with ThreadPoolExecutor(max_workers=4) as executor:
         def schedule_ready_events():
-            for name, deps, label, call in EVENT_FLOW:
+            for event in EVENT_FLOW:
+                name = event["name"]
+                deps = event["deps"]
                 if name in scheduled_events or failure_message or transport_error:
                     continue
                 if all(dep in completed_events for dep in deps):
                     dependency_clock = merge_clocks(*(event_clocks.get(dep, empty_clock()) for dep in deps))
-                    future = executor.submit(call, order_id, dependency_clock)
+                    future = executor.submit(
+                        execute_event,
+                        event["service"],
+                        event["method"],
+                        order_id,
+                        dependency_clock,
+                    )
                     pending_futures[future] = name
                     scheduled_events.add(name)
-                    print(
-                        f"[orchestrator] Scheduled event={name} order_id={order_id} deps={deps} vc={clock_to_log(dependency_clock)}"
+                    logger.info(
+                        "Scheduled event=%s order_id=%s deps=%s vc=%s",
+                        name,
+                        order_id,
+                        deps,
+                        clock_to_log(dependency_clock),
                     )
 
         schedule_ready_events()
@@ -321,17 +267,17 @@ def run_event_flow(order_id, order_json):
                 try:
                     response = future.result()
                 except CancelledError:
-                    print(f"[orchestrator] Cancelled event={event_name} order_id={order_id}")
+                    logger.info("Cancelled event=%s order_id=%s", event_name, order_id)
                     continue
                 except grpc.RpcError as exc:
                     transport_error = f"Event {event_name} failed with gRPC error {exc.code().name}"
-                    print(f"[orchestrator] {transport_error} for order_id={order_id}")
+                    logger.error("%s for order_id=%s", transport_error, order_id)
                     for pending_future in list(pending_futures.keys()):
                         pending_future.cancel()
                     continue
                 except Exception as exc:
                     transport_error = f"Event {event_name} failed unexpectedly: {str(exc)}"
-                    print(f"[orchestrator] {transport_error} for order_id={order_id}")
+                    logger.exception("%s for order_id=%s", transport_error, order_id)
                     for pending_future in list(pending_futures.keys()):
                         pending_future.cancel()
                     continue
@@ -342,12 +288,15 @@ def run_event_flow(order_id, order_json):
 
                 if not response.success:
                     failure_message = f"{response.event_name}: {response.reason}"
-                    print(f"[orchestrator] Event failure for order_id={order_id}: {failure_message}")
+                    logger.warning("Event failure for order_id=%s: %s", order_id, failure_message)
                     for pending_future in list(pending_futures.keys()):
                         pending_future.cancel()
                 else:
-                    print(
-                        f"[orchestrator] Completed event={event_name} order_id={order_id} vc={clock_to_log(response_clock)}"
+                    logger.info(
+                        "Completed event=%s order_id=%s vc=%s",
+                        event_name,
+                        order_id,
+                        clock_to_log(response_clock),
                     )
                     if event_name == "generate_suggestions":
                         suggested_books = [
@@ -421,16 +370,16 @@ def checkout():
 
     order_id = str(uuid.uuid4())
     request_data["orderId"] = order_id
-    print(f"[orchestrator] Accepted checkout request for order_id={order_id}")
+    logger.info("Accepted checkout request for order_id=%s", order_id)
     order_json = json.dumps(request_data)
 
     try:
         flow_result = run_event_flow(order_id, order_json)
     except RuntimeError as exc:
-        print(f"[orchestrator] Downstream workflow failure for order_id={order_id}: {str(exc)}")
+        logger.error("Downstream workflow failure for order_id=%s: %s", order_id, str(exc))
         return error_response(500, str(exc))
     except Exception as exc:
-        print(f"[orchestrator] Unexpected failure for order_id={order_id}: {str(exc)}")
+        logger.exception("Unexpected failure for order_id=%s: %s", order_id, str(exc))
         return error_response(500, f"Unexpected error: {str(exc)}")
 
     response = {
@@ -439,8 +388,12 @@ def checkout():
         "suggestedBooks": flow_result["suggested_books"],
     }
 
-    print(
-        f"[orchestrator] Returning response for order_id={order_id}: status={flow_result['status']}, suggested_books={len(flow_result['suggested_books'])}, vc={clock_to_log(flow_result['vector_clock'])}"
+    logger.info(
+        "Returning response for order_id=%s status=%s suggested_books=%s vc=%s",
+        order_id,
+        flow_result["status"],
+        len(flow_result["suggested_books"]),
+        clock_to_log(flow_result["vector_clock"]),
     )
 
     return jsonify(response)

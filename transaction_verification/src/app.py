@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import sys
@@ -17,6 +18,12 @@ transaction_grpc_path = os.path.abspath(
 sys.path.insert(0, transaction_grpc_path)
 import transaction_verification_pb2 as transaction_verification
 import transaction_verification_pb2_grpc as transaction_verification_grpc
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 CLOCK_KEYS = ("transaction_verification", "fraud_detection", "suggestions")
 SERVICE_KEY = "transaction_verification"
@@ -72,7 +79,7 @@ class TransactionVerificationService(
         try:
             order = json.loads(request.order_json) if request.order_json else {}
         except json.JSONDecodeError:
-            print("[transaction_verification] Failed to cache invalid order payload")
+            logger.warning("Failed to cache invalid order payload")
             return transaction_verification.OrderInitResponse(
                 success=False,
                 reason="Invalid order payload.",
@@ -90,9 +97,7 @@ class TransactionVerificationService(
                 "failed": False,
             }
 
-        print(
-            f"[transaction_verification] Cached order_id={order_id} vc={clock_to_log(initial_clock)}"
-        )
+        logger.info("Cached order_id=%s vc=%s", order_id, clock_to_log(initial_clock))
         return transaction_verification.OrderInitResponse(
             success=True,
             reason="Order cached.",
@@ -110,9 +115,7 @@ class TransactionVerificationService(
             current_clock = dict(state["vector_clock"])
             order = state["order"]
 
-        print(
-            f"[transaction_verification] order_id={order_id} event={event_name} vc={clock_to_log(current_clock)}"
-        )
+        logger.info("order_id=%s event=%s vc=%s", order_id, event_name, clock_to_log(current_clock))
         success, reason = handler(order)
 
         with STATE_LOCK:
@@ -123,8 +126,12 @@ class TransactionVerificationService(
                     state["failed"] = True
                 current_clock = dict(state["vector_clock"])
 
-        print(
-            f"[transaction_verification] order_id={order_id} event={event_name} success={success} reason={reason}"
+        logger.info(
+            "order_id=%s event=%s success=%s reason=%s",
+            order_id,
+            event_name,
+            success,
+            reason,
         )
         return event_response(event_name, success, reason, current_clock)
 
@@ -159,7 +166,7 @@ class TransactionVerificationService(
         with STATE_LOCK:
             state = ORDER_STATES.get(order_id)
             if state is None:
-                print(f"[transaction_verification] Cleanup skipped for order_id={order_id}: already cleared")
+                logger.info("Cleanup skipped for order_id=%s: already cleared", order_id)
                 return transaction_verification.ClearOrderResponse(
                     success=True,
                     reason="Order state already cleared.",
@@ -172,17 +179,18 @@ class TransactionVerificationService(
                 del ORDER_STATES[order_id]
 
         if is_safe_to_clear:
-            print(
-                f"[transaction_verification] Cleared order_id={order_id} final_vc={clock_to_log(final_clock)}"
-            )
+            logger.info("Cleared order_id=%s final_vc=%s", order_id, clock_to_log(final_clock))
             return transaction_verification.ClearOrderResponse(
                 success=True,
                 reason="Order state cleared.",
                 vector_clock=clock_to_proto(local_clock),
             )
 
-        print(
-            f"[transaction_verification] Cleanup rejected for order_id={order_id}: local_vc={clock_to_log(local_clock)} final_vc={clock_to_log(final_clock)}"
+        logger.warning(
+            "Cleanup rejected for order_id=%s local_vc=%s final_vc=%s",
+            order_id,
+            clock_to_log(local_clock),
+            clock_to_log(final_clock),
         )
         return transaction_verification.ClearOrderResponse(
             success=False,
@@ -242,7 +250,7 @@ def serve():
     port = "50052"
     server.add_insecure_port("[::]:" + port)
     server.start()
-    print("Server started. Listening on port 50052.")
+    logger.info("Server started. Listening on port 50052.")
     server.wait_for_termination()
 
 

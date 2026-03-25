@@ -10,6 +10,9 @@
     "utils/pb/transaction_verification",
     "utils/pb/suggestions"
   ],
+  "ignore": [
+    "utils/pb"
+  ],
   "reportMissingImports": "none",
   "reportMissingModuleSource": "none"
 }

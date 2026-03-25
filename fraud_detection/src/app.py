@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import sys
 import threading
@@ -14,6 +15,12 @@ fraud_detection_grpc_path = os.path.abspath(os.path.join(FILE, '../../../utils/p
 sys.path.insert(0, fraud_detection_grpc_path)
 import fraud_detection_pb2 as fraud_detection
 import fraud_detection_pb2_grpc as fraud_detection_grpc
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 CLOCK_KEYS = ("transaction_verification", "fraud_detection", "suggestions")
 SERVICE_KEY = "fraud_detection"
@@ -67,7 +74,7 @@ class FraudDetectionService(fraud_detection_grpc.FraudDetectionServicer):
         try:
             order = json.loads(request.order_json) if request.order_json else {}
         except json.JSONDecodeError:
-            print("[fraud_detection] Failed to cache invalid order payload")
+            logger.warning("Failed to cache invalid order payload")
             return fraud_detection.OrderInitResponse(
                 success=False,
                 reason="Invalid order payload.",
@@ -85,7 +92,7 @@ class FraudDetectionService(fraud_detection_grpc.FraudDetectionServicer):
                 "failed": False,
             }
 
-        print(f"[fraud_detection] Cached order_id={order_id} vc={clock_to_log(initial_clock)}")
+        logger.info("Cached order_id=%s vc=%s", order_id, clock_to_log(initial_clock))
         return fraud_detection.OrderInitResponse(
             success=True,
             reason="Order cached.",
@@ -103,7 +110,7 @@ class FraudDetectionService(fraud_detection_grpc.FraudDetectionServicer):
             current_clock = dict(state["vector_clock"])
             order = state["order"]
 
-        print(f"[fraud_detection] order_id={order_id} event={event_name} vc={clock_to_log(current_clock)}")
+        logger.info("order_id=%s event=%s vc=%s", order_id, event_name, clock_to_log(current_clock))
         success, reason = handler(order)
 
         with STATE_LOCK:
@@ -114,8 +121,12 @@ class FraudDetectionService(fraud_detection_grpc.FraudDetectionServicer):
                     state["failed"] = True
                 current_clock = dict(state["vector_clock"])
 
-        print(
-            f"[fraud_detection] order_id={order_id} event={event_name} success={success} reason={reason}"
+        logger.info(
+            "order_id=%s event=%s success=%s reason=%s",
+            order_id,
+            event_name,
+            success,
+            reason,
         )
         return event_response(event_name, success, reason, current_clock)
 
@@ -142,7 +153,7 @@ class FraudDetectionService(fraud_detection_grpc.FraudDetectionServicer):
         with STATE_LOCK:
             state = ORDER_STATES.get(order_id)
             if state is None:
-                print(f"[fraud_detection] Cleanup skipped for order_id={order_id}: already cleared")
+                logger.info("Cleanup skipped for order_id=%s: already cleared", order_id)
                 return fraud_detection.ClearOrderResponse(
                     success=True,
                     reason="Order state already cleared.",
@@ -155,15 +166,18 @@ class FraudDetectionService(fraud_detection_grpc.FraudDetectionServicer):
                 del ORDER_STATES[order_id]
 
         if is_safe_to_clear:
-            print(f"[fraud_detection] Cleared order_id={order_id} final_vc={clock_to_log(final_clock)}")
+            logger.info("Cleared order_id=%s final_vc=%s", order_id, clock_to_log(final_clock))
             return fraud_detection.ClearOrderResponse(
                 success=True,
                 reason="Order state cleared.",
                 vector_clock=clock_to_proto(local_clock),
             )
 
-        print(
-            f"[fraud_detection] Cleanup rejected for order_id={order_id}: local_vc={clock_to_log(local_clock)} final_vc={clock_to_log(final_clock)}"
+        logger.warning(
+            "Cleanup rejected for order_id=%s local_vc=%s final_vc=%s",
+            order_id,
+            clock_to_log(local_clock),
+            clock_to_log(final_clock),
         )
         return fraud_detection.ClearOrderResponse(
             success=False,
@@ -203,7 +217,7 @@ def serve():
     port = "50051"
     server.add_insecure_port("[::]:" + port)
     server.start()
-    print("Server started. Listening on port 50051.")
+    logger.info("Server started. Listening on port 50051.")
     server.wait_for_termination()
 
 

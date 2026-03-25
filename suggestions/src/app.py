@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import sys
 import threading
@@ -14,6 +15,12 @@ suggestions_grpc_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/su
 sys.path.insert(0, suggestions_grpc_path)
 import suggestions_pb2 as suggestions
 import suggestions_pb2_grpc as suggestions_grpc
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 CLOCK_KEYS = ("transaction_verification", "fraud_detection", "suggestions")
 SERVICE_KEY = "suggestions"
@@ -75,7 +82,7 @@ class SuggestionsService(suggestions_grpc.SuggestionsServicer):
         try:
             order = json.loads(request.order_json) if request.order_json else {}
         except json.JSONDecodeError:
-            print("[suggestions] Failed to cache invalid order payload")
+            logger.warning("Failed to cache invalid order payload")
             return suggestions.OrderInitResponse(
                 success=False,
                 reason="Invalid order payload.",
@@ -94,7 +101,7 @@ class SuggestionsService(suggestions_grpc.SuggestionsServicer):
                 "generated_books": [],
             }
 
-        print(f"[suggestions] Cached order_id={order_id} vc={clock_to_log(initial_clock)}")
+        logger.info("Cached order_id=%s vc=%s", order_id, clock_to_log(initial_clock))
         return suggestions.OrderInitResponse(
             success=True,
             reason="Order cached.",
@@ -105,7 +112,7 @@ class SuggestionsService(suggestions_grpc.SuggestionsServicer):
         with STATE_LOCK:
             state = ORDER_STATES.get(order_id)
             if state is None:
-                return False, "Order state not found.", empty_clock(), None
+                return False, "Order state not found.", empty_clock(), {}
 
             state["vector_clock"] = merge_clocks(state["vector_clock"], incoming_clock)
             increment_clock(state["vector_clock"])
@@ -113,7 +120,7 @@ class SuggestionsService(suggestions_grpc.SuggestionsServicer):
             order = state["order"]
             prepared_books = list(state.get("prepared_books", []))
 
-        print(f"[suggestions] order_id={order_id} event={event_name} vc={clock_to_log(current_clock)}")
+        logger.info("order_id=%s event=%s vc=%s", order_id, event_name, clock_to_log(current_clock))
         success, reason, updates = handler(order, prepared_books)
 
         with STATE_LOCK:
@@ -124,7 +131,13 @@ class SuggestionsService(suggestions_grpc.SuggestionsServicer):
                     state[key] = value
                 current_clock = dict(state["vector_clock"])
 
-        print(f"[suggestions] order_id={order_id} event={event_name} success={success} reason={reason}")
+        logger.info(
+            "order_id=%s event=%s success=%s reason=%s",
+            order_id,
+            event_name,
+            success,
+            reason,
+        )
         return success, reason, current_clock, updates
 
     def PrepareSuggestionsContext(self, request, context):
@@ -164,7 +177,7 @@ class SuggestionsService(suggestions_grpc.SuggestionsServicer):
         with STATE_LOCK:
             state = ORDER_STATES.get(order_id)
             if state is None:
-                print(f"[suggestions] Cleanup skipped for order_id={order_id}: already cleared")
+                logger.info("Cleanup skipped for order_id=%s: already cleared", order_id)
                 return suggestions.ClearOrderResponse(
                     success=True,
                     reason="Order state already cleared.",
@@ -177,15 +190,18 @@ class SuggestionsService(suggestions_grpc.SuggestionsServicer):
                 del ORDER_STATES[order_id]
 
         if is_safe_to_clear:
-            print(f"[suggestions] Cleared order_id={order_id} final_vc={clock_to_log(final_clock)}")
+            logger.info("Cleared order_id=%s final_vc=%s", order_id, clock_to_log(final_clock))
             return suggestions.ClearOrderResponse(
                 success=True,
                 reason="Order state cleared.",
                 vector_clock=clock_to_proto(local_clock),
             )
 
-        print(
-            f"[suggestions] Cleanup rejected for order_id={order_id}: local_vc={clock_to_log(local_clock)} final_vc={clock_to_log(final_clock)}"
+        logger.warning(
+            "Cleanup rejected for order_id=%s local_vc=%s final_vc=%s",
+            order_id,
+            clock_to_log(local_clock),
+            clock_to_log(final_clock),
         )
         return suggestions.ClearOrderResponse(
             success=False,
@@ -225,7 +241,7 @@ def serve():
     port = "50053"
     server.add_insecure_port("[::]:" + port)
     server.start()
-    print("Server started. Listening on port 50053.")
+    logger.info("Server started. Listening on port 50053.")
     server.wait_for_termination()
 
 
