@@ -33,6 +33,7 @@ services:
       # Check app.py in the orchestrator directory to see how this is used
       - PYTHONFILE=/app/orchestrator/src/app.py
       - RPC_TIMEOUT_SECONDS=5
+      - ORDER_QUEUE_TARGET=order_queue:50054
     volumes:
       # Mount the utils directory in the current directory to the /app/utils directory in the container
       - ./utils:/app/utils
@@ -45,8 +46,29 @@ services:
         condition: service_healthy
       suggestions:
         condition: service_healthy
+      order_queue:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+  order_queue:
+    build:
+      context: ./
+      dockerfile: ./order_queue/Dockerfile
+    ports:
+      - 50054:50054
+    environment:
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONFILE=/app/order_queue/src/app.py
+      - ORDER_QUEUE_PORT=50054
+    volumes:
+      - ./utils:/app/utils
+      - ./order_queue/src:/app/order_queue/src
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost', 50054), 3); s.close()"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -137,3 +159,51 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+  order_executor_1: &order_executor_base
+    build:
+      context: ./
+      dockerfile: ./order_executor/Dockerfile
+    environment: &order_executor_env
+      PYTHONUNBUFFERED: "TRUE"
+      PYTHONFILE: /app/order_executor/src/app.py
+      ORDER_EXECUTOR_PORT: "50055"
+      EXECUTOR_ID: "1"
+      EXECUTOR_TARGET: order_executor_1:50055
+      EXECUTOR_PEERS: 1:order_executor_1:50055,2:order_executor_2:50055,3:order_executor_3:50055,4:order_executor_4:50055
+      ORDER_QUEUE_TARGET: order_queue:50054
+      RPC_TIMEOUT_SECONDS: "2"
+      ELECTION_WAIT_SECONDS: "3"
+      LEADER_CHECK_INTERVAL_SECONDS: "2"
+      DEQUEUE_INTERVAL_SECONDS: "1"
+    volumes:
+      - ./utils:/app/utils
+      - ./order_executor/src:/app/order_executor/src
+    depends_on:
+      order_queue:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost', 50055), 3); s.close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+  order_executor_2:
+    <<: *order_executor_base
+    environment:
+      <<: *order_executor_env
+      EXECUTOR_ID: "2"
+      EXECUTOR_TARGET: order_executor_2:50055
+  order_executor_3:
+    <<: *order_executor_base
+    profiles: ["n3", "n4"]
+    environment:
+      <<: *order_executor_env
+      EXECUTOR_ID: "3"
+      EXECUTOR_TARGET: order_executor_3:50055
+  order_executor_4:
+    <<: *order_executor_base
+    profiles: ["n4"]
+    environment:
+      <<: *order_executor_env
+      EXECUTOR_ID: "4"
+      EXECUTOR_TARGET: order_executor_4:50055

@@ -8,6 +8,10 @@ This repository contains the initial code for the practice sessions of the Distr
 
 The code consists of multiple services. Each service is located in a separate folder. The `frontend` service folder contains a Dockerfile and the code for an example bookstore application. Each backend service folder (e.g. `orchestrator` or `fraud_detection`) contains a Dockerfile, a requirements.txt file and the source code of the service. During the practice sessions, you will implement the missing functionality in these backend services, or extend the backend with new services.
 
+The default compose setup also includes:
+- `order_queue` (gRPC queue service)
+- `order_executor_1` and `order_executor_2` (replicated order executors with leader election)
+
 There is also a `utils` folder that contains some helper code or specifications that are used by multiple services. Check the `utils` folder for more information.
 
 ### Running the code with Docker Compose [recommended]
@@ -29,6 +33,10 @@ docker compose up --build
 ```
 
 The Compose setup now includes service healthchecks and startup dependencies. The orchestrator exposes a health endpoint at `GET /health` on port `5000` in the container (mapped to `8081` on host).
+
+Executor scaling profiles:
+- `docker compose --profile n3 up` enables `order_executor_3`
+- `docker compose --profile n4 up` enables `order_executor_3` and `order_executor_4`
 
 ### Run the code locally
 

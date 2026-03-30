@@ -7,7 +7,7 @@ The REST API handles requests originating from the Frontend, ensuring communicat
 Upon receiving a user request, the orchestrator service now coordinates an ordered multi-event workflow. It generates a unique `orderId`, initializes backend order state in all services, schedules causally dependent events, propagates vector clocks, and returns early when any intermediate event fails.
 
 ## Backend Microservices
-Three backend microservices have been developed:
+Five backend microservices are available:
 
 1. **Fraud Detection**
    - Listens on port `50051`.
@@ -24,10 +24,27 @@ Three backend microservices have been developed:
    - Implements logic to calculate and send back a list of new book suggestions.
    - Located in the `suggestions` folder with its own Dockerfile.
 
+4. **Order Queue**
+   - Listens on port `50054`.
+   - Implements `Enqueue` and `Dequeue` RPCs with in-memory FIFO order queueing.
+   - Located in the `order_queue` folder with its own Dockerfile.
+
+5. **Order Executor (replicated)**
+   - Listens on port `50055` inside each executor container.
+   - Replicas run the same code and coordinate with a Bully leader-election algorithm.
+   - Only the current leader dequeues and executes orders (logs `Order is being executed...`).
+   - Located in the `order_executor` folder with its own Dockerfile.
+
 The `docker-compose` file at the top level of the repository lists and orchestrates these services with the necessary configurations (name, port, volumes, etc.).
 
 ## gRPC Communication Setup
-Communication channels to the backend microservices (fraud detection, transaction verification, and suggestions) are established using gRPC. The orchestrator invokes explicit event RPCs in each service and propagates vector clocks on every event call. The gRPC proto file specification can be found in the `utils/pb` folder.
+Communication channels to backend microservices are established using gRPC.
+
+- The orchestrator invokes explicit event RPCs in transaction verification, fraud detection, and suggestions, and propagates vector clocks on every event call.
+- After a successful flow (`Order Approved`), orchestrator enqueues the approved order in the order queue and waits for enqueue confirmation.
+- Executors coordinate among themselves via gRPC (`Ping`, `Election`, `AnnounceLeader`) and the elected leader performs dequeue/execute.
+
+The gRPC proto file specifications are in the `utils/pb` folder.
 
 ## Event Ordering and Vector Clocks
 Seminar 5 is implemented with backend-only vector clocks (components: `transaction_verification`, `fraud_detection`, `suggestions`) and explicit event ordering.
@@ -67,6 +84,20 @@ Relevant logs are added in all services to track initialization, event execution
    ```sh
    docker compose up
    ```
+
+Default startup runs two order-executor replicas (`order_executor_1`, `order_executor_2`).
+
+To run additional replicas:
+- 3 replicas total:
+   ```sh
+   docker compose --profile n3 up
+   ```
+- 4 replicas total:
+   ```sh
+   docker compose --profile n4 up
+   ```
+
+The Bully algorithm will elect the highest reachable executor ID as leader.
 
 The orchestrator includes `GET /health`, and Docker Compose uses healthchecks for service startup ordering.
 

@@ -18,9 +18,12 @@ FILE = __file__ if '__file__' in globals() else os.getenv("PYTHONFILE", "")
 add_grpc_path(FILE, '../../../utils/pb/fraud_detection')
 add_grpc_path(FILE, '../../../utils/pb/transaction_verification')
 add_grpc_path(FILE, '../../../utils/pb/suggestions')
+add_grpc_path(FILE, '../../../utils/pb/order_queue')
 
 import fraud_detection_pb2 as fraud_detection
 import fraud_detection_pb2_grpc as fraud_detection_grpc
+import order_queue_pb2 as order_queue
+import order_queue_pb2_grpc as order_queue_grpc
 import suggestions_pb2 as suggestions
 import suggestions_pb2_grpc as suggestions_grpc
 import transaction_verification_pb2 as transaction_verification
@@ -53,6 +56,7 @@ def build_service_config():
 
 
 SERVICE_CONFIG = build_service_config()
+ORDER_QUEUE_TARGET = os.getenv("ORDER_QUEUE_TARGET", "order_queue:50054")
 EVENT_FLOW = [
     {
         "name": "validate_items",
@@ -123,6 +127,14 @@ def call_service_rpc(service_name, method_name, request):
         stub = service["stub_class"](channel)
         method = getattr(stub, method_name)
         return method(request, timeout=RPC_TIMEOUT_SECONDS)
+
+
+def enqueue_order(order_id, order_json):
+    request = order_queue.EnqueueRequest(order_id=order_id, order_json=order_json)
+    with grpc.insecure_channel(ORDER_QUEUE_TARGET) as channel:
+        stub = order_queue_grpc.OrderQueueStub(channel)
+        response = stub.Enqueue(request, timeout=RPC_TIMEOUT_SECONDS)
+    return response
 
 
 def init_order(service_name, order_id, order_json, clock):
@@ -372,6 +384,31 @@ def checkout():
         "status": flow_result["status"],
         "suggestedBooks": flow_result["suggested_books"],
     }
+
+    if flow_result["approved"]:
+        try:
+            enqueue_response = enqueue_order(order_id, order_json)
+        except grpc.RpcError as exc:
+            logger.error(
+                "Failed to enqueue approved order_id=%s because queue call failed: %s",
+                order_id,
+                exc.code().name,
+            )
+            return error_response(500, "Order approval succeeded, but enqueue failed.")
+
+        if not enqueue_response.success:
+            logger.error(
+                "Queue rejected approved order_id=%s reason=%s",
+                order_id,
+                enqueue_response.reason,
+            )
+            return error_response(500, f"Order approval succeeded, but enqueue failed: {enqueue_response.reason}")
+
+        logger.info(
+            "Enqueued approved order_id=%s queue_size=%s",
+            order_id,
+            enqueue_response.queue_size,
+        )
 
     logger.info(
         "Returning response for order_id=%s status=%s suggested_books=%s vc=%s",

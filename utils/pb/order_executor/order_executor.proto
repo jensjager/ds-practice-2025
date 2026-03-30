@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package order_executor;
+
+service OrderExecutor {
+    rpc Ping (PingRequest) returns (PingResponse);
+    rpc Election (ElectionRequest) returns (ElectionResponse);
+    rpc AnnounceLeader (CoordinatorRequest) returns (CoordinatorResponse);
+    rpc GetStatus (StatusRequest) returns (StatusResponse);
+}
+
+message PingRequest {
+    int32 from_executor_id = 1;
+}
+
+message PingResponse {
+    bool alive = 1;
+    int32 executor_id = 2;
+    int32 leader_id = 3;
+}
+
+message ElectionRequest {
+    int32 candidate_id = 1;
+}
+
+message ElectionResponse {
+    bool alive = 1;
+    int32 responder_id = 2;
+    string reason = 3;
+}
+
+message CoordinatorRequest {
+    int32 leader_id = 1;
+}
+
+message CoordinatorResponse {
+    bool acknowledged = 1;
+    int32 executor_id = 2;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+    int32 executor_id = 1;
+    int32 leader_id = 2;
+    bool is_leader = 3;
+    bool election_in_progress = 4;
+    int32 known_peer_count = 5;
+}
