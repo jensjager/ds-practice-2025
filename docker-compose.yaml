@@ -179,6 +179,19 @@ services:
     volumes:
       - ./utils:/app/utils
       - ./books_database/src:/app/books_database/src
+  payment:
+    build:
+      context: ./
+      dockerfile: ./payment/Dockerfile
+    ports:
+      - 50059:50057
+    environment:
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONFILE=/app/payment/src/app.py
+      - PAYMENT_PORT=50057
+    volumes:
+      - ./utils:/app/utils
+      - ./payment/src:/app/payment/src
   order_executor_1: &order_executor_base
     build:
       context: ./
@@ -191,6 +204,8 @@ services:
       EXECUTOR_TARGET: order_executor_1:50055
       EXECUTOR_PEERS: 1:order_executor_1:50055,2:order_executor_2:50055,3:order_executor_3:50055,4:order_executor_4:50055
       ORDER_QUEUE_TARGET: order_queue:50054
+      BOOKS_DATABASE_TARGET: books_database_1:50056
+      PAYMENT_TARGET: payment:50057
       RPC_TIMEOUT_SECONDS: "2"
       ELECTION_WAIT_SECONDS: "3"
       LEADER_CHECK_INTERVAL_SECONDS: "2"

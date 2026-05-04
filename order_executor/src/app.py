@@ -21,6 +21,10 @@ add_grpc_path(FILE, '../../../utils/pb/books_database')
 import books_database_pb2 as books_database
 import books_database_pb2_grpc as books_database_grpc
 
+add_grpc_path(FILE, '../../../utils/pb/payment')
+import payment_pb2 as payment
+import payment_pb2_grpc as payment_grpc
+
 setup_logging()
 logger = logging.getLogger(__name__)
 
@@ -59,6 +63,7 @@ class ExecutorNode(order_executor_grpc.OrderExecutorServicer):
         self.executor_target = os.getenv("EXECUTOR_TARGET", f"localhost:{self.executor_port}")
         self.order_queue_target = os.getenv("ORDER_QUEUE_TARGET", "order_queue:50054")
         self.books_database_target = os.getenv("BOOKS_DATABASE_TARGET", "books_database_1:50056")
+        self.payment_target = os.getenv("PAYMENT_TARGET", "payment:50057")
         self.peers = parse_peer_config(os.getenv("EXECUTOR_PEERS", ""))
 
         self.rpc_timeout_seconds = env_float("RPC_TIMEOUT_SECONDS", 2.0)
@@ -96,6 +101,11 @@ class ExecutorNode(order_executor_grpc.OrderExecutorServicer):
     def _db_stub(self):
         channel = grpc.insecure_channel(self.books_database_target)
         stub = books_database_grpc.BooksDatabaseStub(channel)
+        return channel, stub
+
+    def _payment_stub(self):
+        channel = grpc.insecure_channel(self.payment_target)
+        stub = payment_grpc.PaymentServiceStub(channel)
         return channel, stub
 
     def _is_peer_alive(self, peer_id):
@@ -251,44 +261,94 @@ class ExecutorNode(order_executor_grpc.OrderExecutorServicer):
                 items = order_data.get("items", [])
                 
                 db_channel, db_stub = self._db_stub()
+                payment_channel, payment_stub = self._payment_stub()
+                
                 try:
+                    # Pre-Phase 1: Determine updates for database
+                    db_items = []
+                    can_fulfill = True
                     for item in items:
                         title = item.get("name")
                         quantity = item.get("quantity", 1)
                         
-                        while self._running:
-                            # Step 1: Read current stock
-                            read_resp = db_stub.Read(
-                                books_database.ReadRequest(title=title),
-                                timeout=self.rpc_timeout_seconds
-                            )
-                            current_stock = read_resp.stock
+                        read_resp = db_stub.Read(
+                            books_database.ReadRequest(title=title),
+                            timeout=self.rpc_timeout_seconds
+                        )
+                        current_stock = read_resp.stock
+                        
+                        if current_stock >= quantity:
+                            db_items.append(books_database.WriteRequest(
+                                title=title,
+                                new_stock=current_stock - quantity,
+                                expected_current_stock=current_stock,
+                                is_replica_update=False
+                            ))
+                        else:
+                            can_fulfill = False
+                            logger.warning("Not enough stock for %s. Required: %d, Available: %d", title, quantity, current_stock)
+                            break
                             
-                            # Step 2: Check stock availability
-                            if current_stock >= quantity:
-                                new_stock = current_stock - quantity
-                                # Step 3: Write updated stock back (Compare-and-Swap)
-                                write_resp = db_stub.Write(
-                                    books_database.WriteRequest(
-                                        title=title,
-                                        new_stock=new_stock,
-                                        expected_current_stock=current_stock,
-                                        is_replica_update=False
-                                    ),
-                                    timeout=self.rpc_timeout_seconds
-                                )
-                                
-                                if write_resp.success:
-                                    logger.info("Successfully decremented stock for %s from %d to %d", title, current_stock, new_stock)
-                                    break # move to next item
-                                else:
-                                    logger.warning("Concurrent write detected for %s, retrying...", title)
-                                    time.sleep(0.1) # Retry backoff
-                            else:
-                                logger.warning("Not enough stock for %s. Required: %d, Available: %d", title, quantity, current_stock)
-                                break
+                    if not can_fulfill:
+                        logger.warning("Aborting order %s before 2PC due to insufficient stock", response.order_id)
+                        continue
+                        
+                    # Phase 1: Prepare
+                    logger.info("Starting Phase 1 (Prepare) for order %s", response.order_id)
+                    db_ready = False
+                    payment_ready = False
+                    
+                    try:
+                        db_prep_resp = db_stub.Prepare(
+                            books_database.PrepareRequest(order_id=response.order_id, items=db_items),
+                            timeout=self.rpc_timeout_seconds
+                        )
+                        db_ready = db_prep_resp.ready
+                    except grpc.RpcError as e:
+                        logger.error("Database Prepare failed: %s", e)
+                        
+                    try:
+                        pay_prep_resp = payment_stub.Prepare(
+                            payment.PrepareRequest(order_id=response.order_id),
+                            timeout=self.rpc_timeout_seconds
+                        )
+                        payment_ready = pay_prep_resp.ready
+                    except grpc.RpcError as e:
+                        logger.error("Payment Prepare failed: %s", e)
+                        
+                    # Phase 2: Commit or Abort
+                    if db_ready and payment_ready:
+                        logger.info("All participants ready. Starting Phase 2 (Commit) for order %s", response.order_id)
+                        
+                        try:
+                            db_stub.Commit(books_database.CommitRequest(order_id=response.order_id), timeout=self.rpc_timeout_seconds)
+                        except grpc.RpcError as e:
+                            logger.error("Database Commit failed (needs recovery): %s", e)
+                            
+                        try:
+                            payment_stub.Commit(payment.CommitRequest(order_id=response.order_id), timeout=self.rpc_timeout_seconds)
+                        except grpc.RpcError as e:
+                            logger.error("Payment Commit failed (needs recovery): %s", e)
+                            
+                        logger.info("Successfully committed order %s", response.order_id)
+                    else:
+                        logger.warning("Not all participants ready. Starting Phase 2 (Abort) for order %s", response.order_id)
+                        
+                        try:
+                            db_stub.Abort(books_database.AbortRequest(order_id=response.order_id), timeout=self.rpc_timeout_seconds)
+                        except grpc.RpcError as e:
+                            logger.error("Database Abort failed: %s", e)
+                            
+                        try:
+                            payment_stub.Abort(payment.AbortRequest(order_id=response.order_id), timeout=self.rpc_timeout_seconds)
+                        except grpc.RpcError as e:
+                            logger.error("Payment Abort failed: %s", e)
+                            
+                        logger.warning("Successfully aborted order %s", response.order_id)
+
                 finally:
                     db_channel.close()
+                    payment_channel.close()
             except Exception as e:
                 logger.error("Failed to process order %s: %s", response.order_id, e)
 

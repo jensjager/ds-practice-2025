@@ -5,6 +5,11 @@ package books_database;
 service BooksDatabase {
     rpc Read (ReadRequest) returns (ReadResponse);
     rpc Write (WriteRequest) returns (WriteResponse);
+    
+    // 2PC operations
+    rpc Prepare (PrepareRequest) returns (PrepareResponse);
+    rpc Commit (CommitRequest) returns (CommitResponse);
+    rpc Abort (AbortRequest) returns (AbortResponse);
 }
 
 message ReadRequest {
@@ -24,4 +29,30 @@ message WriteRequest {
 
 message WriteResponse {
     bool success = 1;
+}
+
+// 2PC Messages
+message PrepareRequest {
+    string order_id = 1;
+    repeated WriteRequest items = 2; // The items to update for this order
+}
+
+message PrepareResponse {
+    bool ready = 1;
+}
+
+message CommitRequest {
+    string order_id = 1;
+}
+
+message CommitResponse {
+    bool success = 1;
+}
+
+message AbortRequest {
+    string order_id = 1;
+}
+
+message AbortResponse {
+    bool aborted = 1;
 }

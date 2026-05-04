@@ -36,6 +36,7 @@ class BooksDatabaseServicer(books_database_grpc.BooksDatabaseServicer):
                 logger.error(f"Failed to load initial stock: {e}")
                 
         self.lock = threading.Lock()
+        self.temp_updates = {}
         
         logger.info(f"Initialized database. Primary: {self.is_primary}")
 
@@ -112,7 +113,58 @@ class BooksDatabaseServicer(books_database_grpc.BooksDatabaseServicer):
         logger.info(f"Primary updated title='{request.title}' to {request.new_stock} and replicated: {replication_success}")
         return books_database.WriteResponse(success=replication_success)
 
+    def Prepare(self, request, context):
+        with self.lock:
+            # Check if we can fulfill all updates in the transaction
+            for item in request.items:
+                current_stock = self.store.get(item.title, 0)
+                # Stock checks and consistency will be validated against expected_current_stock
+                if current_stock != item.expected_current_stock:
+                    logger.warning(f"Prepare failed: Concurrent write or insufficient stock for {item.title}. Expected {item.expected_current_stock}, got {current_stock}")
+                    return books_database.PrepareResponse(ready=False)
+            
+            # Store tentatively
+            self.temp_updates[request.order_id] = request.items
+        logger.info(f"Prepared transaction for order {request.order_id}")
+        return books_database.PrepareResponse(ready=True)
 
+    def Commit(self, request, context):
+        with self.lock:
+            items = self.temp_updates.pop(request.order_id, None)
+            if items:
+                # Apply updates
+                for item in items:
+                    self.store[item.title] = item.new_stock
+                    
+                # Replicate to backups
+                for target in self.backup_targets:
+                    stub, channel = self._get_stub(target)
+                    try:
+                        for item in items:
+                            rep_req = books_database.WriteRequest(
+                                title=item.title,
+                                new_stock=item.new_stock,
+                                expected_current_stock=item.expected_current_stock,
+                                is_replica_update=True
+                            )
+                            stub.Write(rep_req, timeout=3.0)
+                    except grpc.RpcError as e:
+                        logger.error(f"Failed to replicate commit to {target}: {e.code().name}")
+                    finally:
+                        channel.close()
+
+                logger.info(f"Committed transaction for order {request.order_id}")
+                return books_database.CommitResponse(success=True)
+            else:
+                logger.warning(f"Commit failed: transaction not prepared for order {request.order_id}")
+                return books_database.CommitResponse(success=False)
+
+    def Abort(self, request, context):
+        with self.lock:
+            self.temp_updates.pop(request.order_id, None)
+        logger.info(f"Aborted transaction for order {request.order_id}")
+        return books_database.AbortResponse(aborted=True)
+        
 def serve():
     servicer = BooksDatabaseServicer()
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
