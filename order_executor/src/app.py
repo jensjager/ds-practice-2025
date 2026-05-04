@@ -2,6 +2,7 @@ import logging
 import os
 import threading
 import time
+import json
 from concurrent import futures
 
 import grpc
@@ -15,6 +16,10 @@ import order_executor_pb2 as order_executor
 import order_executor_pb2_grpc as order_executor_grpc
 import order_queue_pb2 as order_queue
 import order_queue_pb2_grpc as order_queue_grpc
+
+add_grpc_path(FILE, '../../../utils/pb/books_database')
+import books_database_pb2 as books_database
+import books_database_pb2_grpc as books_database_grpc
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -53,6 +58,7 @@ class ExecutorNode(order_executor_grpc.OrderExecutorServicer):
         self.executor_port = env_int("ORDER_EXECUTOR_PORT", 50055)
         self.executor_target = os.getenv("EXECUTOR_TARGET", f"localhost:{self.executor_port}")
         self.order_queue_target = os.getenv("ORDER_QUEUE_TARGET", "order_queue:50054")
+        self.books_database_target = os.getenv("BOOKS_DATABASE_TARGET", "books_database_1:50056")
         self.peers = parse_peer_config(os.getenv("EXECUTOR_PEERS", ""))
 
         self.rpc_timeout_seconds = env_float("RPC_TIMEOUT_SECONDS", 2.0)
@@ -85,6 +91,11 @@ class ExecutorNode(order_executor_grpc.OrderExecutorServicer):
     def _queue_stub(self):
         channel = grpc.insecure_channel(self.order_queue_target)
         stub = order_queue_grpc.OrderQueueStub(channel)
+        return channel, stub
+
+    def _db_stub(self):
+        channel = grpc.insecure_channel(self.books_database_target)
+        stub = books_database_grpc.BooksDatabaseStub(channel)
         return channel, stub
 
     def _is_peer_alive(self, peer_id):
@@ -234,6 +245,52 @@ class ExecutorNode(order_executor_grpc.OrderExecutorServicer):
                 self.executor_id,
                 response.queue_size,
             )
+
+            try:
+                order_data = json.loads(response.order_json)
+                items = order_data.get("items", [])
+                
+                db_channel, db_stub = self._db_stub()
+                try:
+                    for item in items:
+                        title = item.get("name")
+                        quantity = item.get("quantity", 1)
+                        
+                        while self._running:
+                            # Step 1: Read current stock
+                            read_resp = db_stub.Read(
+                                books_database.ReadRequest(title=title),
+                                timeout=self.rpc_timeout_seconds
+                            )
+                            current_stock = read_resp.stock
+                            
+                            # Step 2: Check stock availability
+                            if current_stock >= quantity:
+                                new_stock = current_stock - quantity
+                                # Step 3: Write updated stock back (Compare-and-Swap)
+                                write_resp = db_stub.Write(
+                                    books_database.WriteRequest(
+                                        title=title,
+                                        new_stock=new_stock,
+                                        expected_current_stock=current_stock,
+                                        is_replica_update=False
+                                    ),
+                                    timeout=self.rpc_timeout_seconds
+                                )
+                                
+                                if write_resp.success:
+                                    logger.info("Successfully decremented stock for %s from %d to %d", title, current_stock, new_stock)
+                                    break # move to next item
+                                else:
+                                    logger.warning("Concurrent write detected for %s, retrying...", title)
+                                    time.sleep(0.1) # Retry backoff
+                            else:
+                                logger.warning("Not enough stock for %s. Required: %d, Available: %d", title, quantity, current_stock)
+                                break
+                finally:
+                    db_channel.close()
+            except Exception as e:
+                logger.error("Failed to process order %s: %s", response.order_id, e)
 
     def Ping(self, request, context):
         with self._state_lock:

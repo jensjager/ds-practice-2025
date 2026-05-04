@@ -75,27 +75,17 @@ services:
       start_period: 10s
   fraud_detection:
     build:
-      # Use the current directory as the build context
-      # This allows us to access the files in the current directory inside the Dockerfile
       context: ./
-      # Use the Dockerfile in the fraud_detection directorys
       dockerfile: ./fraud_detection/Dockerfile
     ports:
-      # Expose port 50051 on the host, and map port 50051 of the container to port 50051 on the host
       - 50051:50051
     environment:
-      # Pass the environment variables to the container
-      # The PYTHONUNBUFFERED environment variable ensures that the output from the application is logged to the console
       - PYTHONUNBUFFERED=TRUE
-      # The PYTHONFILE environment variable specifies the absolute entry point of the application
-      # Check app.py in the fraud_detection directory to see how this is used
       - PYTHONFILE=/app/fraud_detection/src/app.py
       - ORDER_STATE_TTL_SECONDS=900
       - ORDER_STATE_CLEANUP_INTERVAL_SECONDS=30
     volumes:
-      # Mount the utils directory in the current directory to the /app/utils directory in the container
       - ./utils:/app/utils
-      # Mount the fraud_detection/src directory in the current directory to the /app/fraud_detection/src directory in the container
       - ./fraud_detection/src:/app/fraud_detection/src
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost', 50051), 3); s.close()"]
@@ -105,25 +95,17 @@ services:
       start_period: 10s
   transaction_verification:
     build:
-      # Use the current directory as the build context
-      # This allows us to access the files in the current directory inside the Dockerfile
       context: ./
-      # Use the Dockerfile in the transaction_verification directory
       dockerfile: ./transaction_verification/Dockerfile
     ports:
-      # Expose port 50052 on the host, and map port 50052 of the container to port 50052 on the host
       - 50052:50052
     environment:
-      # Pass the environment variables to the container
       - PYTHONUNBUFFERED=TRUE
-      # The PYTHONFILE environment variable specifies the absolute entry point of the application
       - PYTHONFILE=/app/transaction_verification/src/app.py
       - ORDER_STATE_TTL_SECONDS=900
       - ORDER_STATE_CLEANUP_INTERVAL_SECONDS=30
     volumes:
-      # Mount the utils directory in the current directory to the /app/utils directory in the container
       - ./utils:/app/utils
-      # Mount the transaction_verification/src directory in the current directory to the /app/transaction_verification/src directory in the container
       - ./transaction_verification/src:/app/transaction_verification/src
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost', 50052), 3); s.close()"]
@@ -133,25 +115,17 @@ services:
       start_period: 10s
   suggestions:
     build:
-      # Use the current directory as the build context
-      # This allows us to access the files in the current directory inside the Dockerfile
       context: ./
-      # Use the Dockerfile in the suggestions directory
       dockerfile: ./suggestions/Dockerfile
     ports:
-      # Expose port 50053 on the host, and map port 50053 of the container to port 50053 on the host
       - 50053:50053
     environment:
-      # Pass the environment variables to the container
       - PYTHONUNBUFFERED=TRUE
-      # The PYTHONFILE environment variable specifies the absolute entry point of the application
       - PYTHONFILE=/app/suggestions/src/app.py
       - ORDER_STATE_TTL_SECONDS=900
       - ORDER_STATE_CLEANUP_INTERVAL_SECONDS=30
     volumes:
-      # Mount the utils directory in the current directory to the /app/utils directory in the container
       - ./utils:/app/utils
-      # Mount the suggestions/src directory in the current directory to the /app/suggestions/src directory in the container
       - ./suggestions/src:/app/suggestions/src
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost', 50053), 3); s.close()"]
@@ -159,6 +133,52 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+  books_database_1:
+    build:
+      context: ./
+      dockerfile: ./books_database/Dockerfile
+    ports:
+      - 50056:50056
+    environment:
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONFILE=/app/books_database/src/app.py
+      - BOOKS_DATABASE_PORT=50056
+      - IS_PRIMARY=true
+      - PRIMARY_TARGET=books_database_1:50056
+      - BACKUP_TARGETS=books_database_2:50057,books_database_3:50058
+    volumes:
+      - ./utils:/app/utils
+      - ./books_database/src:/app/books_database/src
+  books_database_2:
+    build:
+      context: ./
+      dockerfile: ./books_database/Dockerfile
+    ports:
+      - 50057:50057
+    environment:
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONFILE=/app/books_database/src/app.py
+      - BOOKS_DATABASE_PORT=50057
+      - IS_PRIMARY=false
+      - PRIMARY_TARGET=books_database_1:50056
+    volumes:
+      - ./utils:/app/utils
+      - ./books_database/src:/app/books_database/src
+  books_database_3:
+    build:
+      context: ./
+      dockerfile: ./books_database/Dockerfile
+    ports:
+      - 50058:50058
+    environment:
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONFILE=/app/books_database/src/app.py
+      - BOOKS_DATABASE_PORT=50058
+      - IS_PRIMARY=false
+      - PRIMARY_TARGET=books_database_1:50056
+    volumes:
+      - ./utils:/app/utils
+      - ./books_database/src:/app/books_database/src
   order_executor_1: &order_executor_base
     build:
       context: ./
