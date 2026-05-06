@@ -73,8 +73,15 @@ EVENT_FLOW = [
         "method": "ValidateUserData",
     },
     {
-        "name": "validate_card_format",
+        "name": "check_stock",
         "deps": ["validate_items"],
+        "label": "Check stock",
+        "service": "transaction_verification",
+        "method": "CheckStock",
+    },
+    {
+        "name": "validate_card_format",
+        "deps": ["check_stock"],
         "label": "Validate card format",
         "service": "transaction_verification",
         "method": "ValidateCardFormat",

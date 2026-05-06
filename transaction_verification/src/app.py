@@ -25,6 +25,10 @@ add_grpc_path(FILE, '../../../utils/pb/transaction_verification')
 import transaction_verification_pb2 as transaction_verification
 import transaction_verification_pb2_grpc as transaction_verification_grpc
 
+add_grpc_path(FILE, '../../../utils/pb/books_database')
+import books_database_pb2 as books_database
+import books_database_pb2_grpc as books_database_grpc
+
 setup_logging()
 logger = logging.getLogger(__name__)
 
@@ -51,6 +55,9 @@ def event_response(event_name, success, reason, clock):
 class TransactionVerificationService(
     transaction_verification_grpc.TransactionVerificationServicer
 ):
+    def __init__(self):
+        self.books_database_target = os.getenv("BOOKS_DATABASE_TARGET", "books_database_1:50056")
+
     def InitOrder(self, request, context):
         try:
             order = json.loads(request.order_json) if request.order_json else {}
@@ -122,6 +129,14 @@ class TransactionVerificationService(
             self._validate_items,
         )
 
+    def CheckStock(self, request, context):
+        return self._execute_event(
+            request.order_id,
+            clock_from_proto(request.vector_clock),
+            "check_stock",
+            self._check_stock,
+        )
+
     def ValidateUserData(self, request, context):
         return self._execute_event(
             request.order_id,
@@ -185,6 +200,35 @@ class TransactionVerificationService(
         if any(int(item.get("quantity", 0)) <= 0 for item in items):
             return False, "Item quantities must be positive."
         return True, "Items validated."
+
+    def _check_stock(self, order):
+        items = order.get("items", []) or []
+        if not items:
+            return True, "No items to check."
+
+        channel = grpc.insecure_channel(self.books_database_target)
+        stub = books_database_grpc.BooksDatabaseStub(channel)
+        
+        try:
+            for item in items:
+                title = item.get("name")
+                quantity = int(item.get("quantity", 0))
+                
+                try:
+                    read_resp = stub.Read(
+                        books_database.ReadRequest(title=title),
+                        timeout=5.0
+                    )
+                    current_stock = read_resp.stock
+                    if current_stock < quantity:
+                        return False, f"Insufficient stock for {title}. Required: {quantity}, Available: {current_stock}"
+                except grpc.RpcError as e:
+                    logger.error(f"Failed to read stock for {title}: {e.code().name}")
+                    return False, f"Failed to check stock for {title}."
+        finally:
+            channel.close()
+            
+        return True, "Stock validated."
 
     @staticmethod
     def _validate_user_data(order):

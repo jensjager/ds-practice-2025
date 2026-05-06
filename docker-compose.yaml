@@ -104,6 +104,7 @@ services:
       - PYTHONFILE=/app/transaction_verification/src/app.py
       - ORDER_STATE_TTL_SECONDS=900
       - ORDER_STATE_CLEANUP_INTERVAL_SECONDS=30
+      - BOOKS_DATABASE_TARGET=books_database_1:50056
     volumes:
       - ./utils:/app/utils
       - ./transaction_verification/src:/app/transaction_verification/src

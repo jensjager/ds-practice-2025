@@ -24,6 +24,11 @@ class TransactionVerificationStub(object):
                 request_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.SerializeToString,
                 response_deserializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.FromString,
                 )
+        self.CheckStock = channel.unary_unary(
+                '/transaction.TransactionVerification/CheckStock',
+                request_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.SerializeToString,
+                response_deserializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.FromString,
+                )
         self.ValidateUserData = channel.unary_unary(
                 '/transaction.TransactionVerification/ValidateUserData',
                 request_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.SerializeToString,
@@ -51,6 +56,12 @@ class TransactionVerificationServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def ValidateItems(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CheckStock(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -84,6 +95,11 @@ def add_TransactionVerificationServicer_to_server(servicer, server):
             ),
             'ValidateItems': grpc.unary_unary_rpc_method_handler(
                     servicer.ValidateItems,
+                    request_deserializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.FromString,
+                    response_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.SerializeToString,
+            ),
+            'CheckStock': grpc.unary_unary_rpc_method_handler(
+                    servicer.CheckStock,
                     request_deserializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.FromString,
                     response_serializer=utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.SerializeToString,
             ),
@@ -141,6 +157,23 @@ class TransactionVerification(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/transaction.TransactionVerification/ValidateItems',
+            utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.SerializeToString,
+            utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def CheckStock(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/transaction.TransactionVerification/CheckStock',
             utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventRequest.SerializeToString,
             utils_dot_pb_dot_transaction__verification_dot_transaction__verification__pb2.EventResponse.FromString,
             options, channel_credentials,

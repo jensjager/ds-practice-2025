@@ -5,6 +5,7 @@ package transaction;
 service TransactionVerification {
     rpc InitOrder (OrderInitRequest) returns (OrderInitResponse);
     rpc ValidateItems (EventRequest) returns (EventResponse);
+    rpc CheckStock (EventRequest) returns (EventResponse);
     rpc ValidateUserData (EventRequest) returns (EventResponse);
     rpc ValidateCardFormat (EventRequest) returns (EventResponse);
     rpc ClearOrder (ClearOrderRequest) returns (ClearOrderResponse);
