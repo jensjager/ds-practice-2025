@@ -6,7 +6,7 @@ The system follows a microservices architecture with a centralized orchestrator 
 
 - **Frontend**: User interface that sends requests to the orchestrator
 - **Orchestrator**: Central coordinator that manages event workflows, vector clocks, and service communication
-- **Backend Microservices**: Five specialized services (Fraud Detection, Transaction Verification, Suggestions, Order Queue, Order Executor)
+- **Backend Microservices**: Seven specialized services (Fraud Detection, Transaction Verification, Suggestions, Order Queue, Order Executor, Books Database, Payment)
 - **gRPC Communication**: All backend services communicate via gRPC protocols
 
 The orchestrator maintains causal ordering through vector clocks and handles failure propagation. Services cache order state with TTL-based cleanup. The Order Executor service uses Bully algorithm for leader election among replicas.
@@ -33,7 +33,7 @@ If any intermediate event fails, the orchestrator immediately propagates the fai
 The orchestrator broadcasts a `ClearOrder` message to all backend services with the final vector clock `VCf`. Each service checks if its local vector clock is less than or equal to `VCf` before clearing the cached order data. This ensures that all services have processed all events up to the final state before cleanup.
 
 ## Backend Microservices
-Five backend microservices are available:
+Seven backend microservices are available:
 
 1. **Fraud Detection**
    - Listens on port `50051`.
@@ -59,7 +59,21 @@ Five backend microservices are available:
    - Listens on port `50055` inside each executor container.
    - Replicas run the same code and coordinate with a Bully leader-election algorithm.
    - Only the current leader dequeues and executes orders (logs `Order is being executed...`).
+   - Acts as **2PC coordinator** for order execution, managing commits across Books Database and Payment services.
    - Located in the `order_executor` folder with its own Dockerfile.
+
+6. **Books Database (replicated)**
+   - Runs as 3 instances: `books_database_1` (primary) on port `50056`, `books_database_2` (backup) on port `50057`, `books_database_3` (backup) on port `50058`.
+   - Implements **Primary-Backup replication** with synchronous replication for sequential consistency.
+   - Provides `Read` and `Write` operations with Compare-and-Swap (CAS) for concurrent write safety.
+   - Implements **2PC participant** interface (`Prepare`, `Commit`, `Abort`) for distributed transactions.
+   - Located in the `books_database` folder with its own Dockerfile.
+
+7. **Payment Service**
+   - Listens on port `50059`.
+   - Single instance (non-replicated) implementing dummy payment logic.
+   - Implements **2PC participant** interface (`Prepare`, `Commit`, `Abort`).
+   - Located in the `payment` folder with its own Dockerfile.
 
 The `docker-compose` file at the top level of the repository lists and orchestrates these services with the necessary configurations (name, port, volumes, etc.).
 
@@ -81,6 +95,8 @@ The Order Executor service is responsible for dequeuing orders from the Order Qu
 - `Election`: Participates in the leader election process.
 - `AnnounceLeader`: Announces the elected leader to other executors.
 - `GetStatus`: Returns the current status of the executor.
+
+**2PC Coordinator Role**: The leader executor acts as the 2PC coordinator, sending `Prepare`/`Commit`/`Abort` messages to the Books Database and Payment Service participants.
 
 The Order Executor service listens on port `50055` and is located in the `order_executor` folder with its own Dockerfile.
 
@@ -166,9 +182,14 @@ Relevant logs are added in all services to track initialization, event execution
    docker compose up
    ```
 
-Default startup runs two order-executor replicas (`order_executor_1`, `order_executor_2`).
+**Default Services Started:**
+- 3 Books Database replicas (`books_database_1` as primary, `books_database_2`, `books_database_3` as backups)
+- 1 Payment Service instance
+- 2 Order Executor replicas (`order_executor_1`, `order_executor_2`)
+- All original backend services (fraud_detection, transaction_verification, suggestions, order_queue, orchestrator, frontend)
 
-To run additional replicas:
+**Additional Executor Replicas:**
+To run additional order executor replicas:
 - 3 replicas total:
    ```sh
    docker compose --profile n3 up
@@ -185,6 +206,42 @@ The orchestrator includes `GET /health`, and Docker Compose uses healthchecks fo
 ## Architecture Diagram
 
 <img src="architecture.png">
+
+## Books Database Service
+
+The Books Database service implements a **replicated key-value store** using a **Primary-Backup replication protocol** for sequential consistency. The system consists of at least 3 instances (1 primary, 2+ backups) running concurrently.
+
+### Architecture
+- **Primary instance** (`books_database_1:50056`): Handles all client write requests and replicates updates to backups
+- **Backup instances** (`books_database_2:50057`, `books_database_3:50058`): Receive replicated writes from primary, serve read requests forwarded from primary
+- **Configuration**: Set via environment variables `IS_PRIMARY`, `PRIMARY_TARGET`, and `BACKUP_TARGETS`
+
+### Consistency Protocol: Primary-Backup Replication
+The implementation uses **synchronous primary-backup replication** with the following characteristics:
+
+**Write Flow:**
+1. Client sends Write request to any database instance
+2. If backup receives it, forwards to primary
+3. Primary checks CAS condition (`expected_current_stock`)
+4. Primary applies update locally
+5. Primary replicates update to all backups synchronously
+6. Returns success only if majority of backups acknowledge
+
+**Read Flow:**
+1. Client sends Read request to any instance
+2. Instance returns local value
+
+### Data Store
+- In-memory key-value store (`self.store` dict)
+- Initialized from `initial_stock.json` on startup
+- Keys: book titles (strings)
+- Values: stock quantities (integers)
+- Thread-safe with `threading.Lock`
+
+
+## Payment Service
+
+A non-replicated dummy service. Runs as a single instance on port `50059`.
 
 ## System Diagram
 
