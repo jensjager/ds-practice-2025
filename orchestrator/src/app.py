@@ -2,23 +2,41 @@ import json
 import logging
 import os
 import uuid
-from concurrent.futures import CancelledError, FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, CancelledError, ThreadPoolExecutor, wait
 
 import grpc
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from utils.other.clock_utils import empty_clock, merge_clocks, clock_from_proto, clock_to_log
+# OpenTelemetry instrumentation
+from opentelemetry import metrics, trace
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.instrumentation.grpc import GrpcInstrumentorClient
+from opentelemetry.instrumentation.requests import RequestsInstrumentor
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.trace import Span, Status, StatusCode
+
+from utils.other.clock_utils import (
+    clock_from_proto,
+    clock_to_log,
+    empty_clock,
+    merge_clocks,
+)
 from utils.other.runtime_utils import add_grpc_path, env_float, setup_logging
 
 # This set of lines are needed to import the gRPC stubs.
 # The path of the stubs is relative to the current file, or absolute inside the container.
 # Change these lines only if strictly needed.
-FILE = __file__ if '__file__' in globals() else os.getenv("PYTHONFILE", "")
-add_grpc_path(FILE, '../../../utils/pb/fraud_detection')
-add_grpc_path(FILE, '../../../utils/pb/transaction_verification')
-add_grpc_path(FILE, '../../../utils/pb/suggestions')
-add_grpc_path(FILE, '../../../utils/pb/order_queue')
+FILE = __file__ if "__file__" in globals() else os.getenv("PYTHONFILE", "")
+add_grpc_path(FILE, "../../../utils/pb/fraud_detection")
+add_grpc_path(FILE, "../../../utils/pb/transaction_verification")
+add_grpc_path(FILE, "../../../utils/pb/suggestions")
+add_grpc_path(FILE, "../../../utils/pb/order_queue")
 
 import fraud_detection_pb2 as fraud_detection
 import fraud_detection_pb2_grpc as fraud_detection_grpc
@@ -32,13 +50,57 @@ import transaction_verification_pb2_grpc as transaction_verification_grpc
 setup_logging()
 logger = logging.getLogger(__name__)
 
+# Setup OpenTelemetry
+OTEL_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://observability:4317")
+
+# Configure trace provider and exporter
+trace_provider = TracerProvider()
+span_exporter = OTLPSpanExporter(endpoint=OTEL_ENDPOINT, insecure=True)
+trace_provider.add_span_processor(BatchSpanProcessor(span_exporter))
+trace.set_tracer_provider(trace_provider)
+
+# Configure metric provider and exporter
+metric_exporter = OTLPMetricExporter(endpoint=OTEL_ENDPOINT, insecure=True)
+metric_reader = PeriodicExportingMetricReader(
+    metric_exporter, export_interval_millis=1000
+)
+metric_provider = MeterProvider(metric_readers=[metric_reader])
+metrics.set_meter_provider(metric_provider)
+
+# Get tracer and meter for manual instrumentation
+tracer = trace.get_tracer(__name__)
+meter = metrics.get_meter(__name__)
+
+# Create metrics
+order_counter = meter.create_counter(
+    "orchestrator.orders.total", description="Total number of orders processed"
+)
+order_approved_counter = meter.create_counter(
+    "orchestrator.orders.approved", description="Number of approved orders"
+)
+order_rejected_counter = meter.create_counter(
+    "orchestrator.orders.rejected", description="Number of rejected orders"
+)
+order_execution_time = meter.create_histogram(
+    "orchestrator.order.execution.time",
+    description="Time taken to process an order (ms)",
+    unit="ms",
+)
+pending_orders_gauge = meter.create_up_down_counter(
+    "orchestrator.orders.pending",
+    description="Current number of pending orders",
+    unit="1",
+)
+
 RPC_TIMEOUT_SECONDS = env_float("RPC_TIMEOUT_SECONDS", 5.0)
 
 
 def build_service_config():
     return {
         "transaction_verification": {
-            "target": os.getenv("TRANSACTION_VERIFICATION_TARGET", "transaction_verification:50052"),
+            "target": os.getenv(
+                "TRANSACTION_VERIFICATION_TARGET", "transaction_verification:50052"
+            ),
             "stub_class": transaction_verification_grpc.TransactionVerificationStub,
             "module": transaction_verification,
         },
@@ -175,17 +237,26 @@ def clear_order(service_name, order_id, clock):
 def initialize_order(order_id, order_json):
     initial_clock = empty_clock()
     init_calls = {
-        service_name: (lambda service_name=service_name: init_order(service_name, order_id, order_json, initial_clock))
+        service_name: (
+            lambda service_name=service_name: init_order(
+                service_name, order_id, order_json, initial_clock
+            )
+        )
         for service_name in SERVICE_CONFIG
     }
 
     with ThreadPoolExecutor(max_workers=3) as executor:
-        future_map = {executor.submit(call): service_name for service_name, call in init_calls.items()}
+        future_map = {
+            executor.submit(call): service_name
+            for service_name, call in init_calls.items()
+        }
         for future, service_name in list(future_map.items()):
             try:
                 response = future.result()
             except grpc.RpcError as exc:
-                raise RuntimeError(f"{service_name} init failed: {exc.code().name}") from exc
+                raise RuntimeError(
+                    f"{service_name} init failed: {exc.code().name}"
+                ) from exc
 
             if not response.success:
                 raise RuntimeError(f"{service_name} init failed: {response.reason}")
@@ -195,12 +266,19 @@ def initialize_order(order_id, order_json):
 
 def broadcast_cleanup(order_id, final_clock):
     cleanup_calls = {
-        service_name: (lambda service_name=service_name: clear_order(service_name, order_id, final_clock))
+        service_name: (
+            lambda service_name=service_name: clear_order(
+                service_name, order_id, final_clock
+            )
+        )
         for service_name in SERVICE_CONFIG
     }
 
     with ThreadPoolExecutor(max_workers=3) as executor:
-        future_map = {executor.submit(call): service_name for service_name, call in cleanup_calls.items()}
+        future_map = {
+            executor.submit(call): service_name
+            for service_name, call in cleanup_calls.items()
+        }
         for future, service_name in list(future_map.items()):
             try:
                 response = future.result()
@@ -232,6 +310,7 @@ def run_event_flow(order_id, order_json):
     transport_error = None
 
     with ThreadPoolExecutor(max_workers=4) as executor:
+
         def schedule_ready_events():
             for event in EVENT_FLOW:
                 name = event["name"]
@@ -239,7 +318,9 @@ def run_event_flow(order_id, order_json):
                 if name in scheduled_events or failure_message or transport_error:
                     continue
                 if all(dep in completed_events for dep in deps):
-                    dependency_clock = merge_clocks(*(event_clocks.get(dep, empty_clock()) for dep in deps))
+                    dependency_clock = merge_clocks(
+                        *(event_clocks.get(dep, empty_clock()) for dep in deps)
+                    )
                     future = executor.submit(
                         execute_event,
                         event["service"],
@@ -269,25 +350,33 @@ def run_event_flow(order_id, order_json):
                     logger.info("Cancelled event=%s order_id=%s", event_name, order_id)
                     continue
                 except grpc.RpcError as exc:
-                    transport_error = f"Event {event_name} failed with gRPC error {exc.code().name}"
+                    transport_error = (
+                        f"Event {event_name} failed with gRPC error {exc.code().name}"
+                    )
                     logger.error("%s for order_id=%s", transport_error, order_id)
                     for pending_future in list(pending_futures.keys()):
                         pending_future.cancel()
                     continue
                 except Exception as exc:
-                    transport_error = f"Event {event_name} failed unexpectedly: {str(exc)}"
+                    transport_error = (
+                        f"Event {event_name} failed unexpectedly: {str(exc)}"
+                    )
                     logger.exception("%s for order_id=%s", transport_error, order_id)
                     for pending_future in list(pending_futures.keys()):
                         pending_future.cancel()
                     continue
 
-                response_clock = clock_from_message(getattr(response, "vector_clock", None))
+                response_clock = clock_from_message(
+                    getattr(response, "vector_clock", None)
+                )
                 event_clocks[event_name] = response_clock
                 completed_events.add(event_name)
 
                 if not response.success:
                     failure_message = f"{response.event_name}: {response.reason}"
-                    logger.warning("Event failure for order_id=%s: %s", order_id, failure_message)
+                    logger.warning(
+                        "Event failure for order_id=%s: %s", order_id, failure_message
+                    )
                     for pending_future in list(pending_futures.keys()):
                         pending_future.cancel()
                 else:
@@ -335,15 +424,20 @@ def run_event_flow(order_id, order_json):
 
 
 app = Flask(__name__)
-CORS(app, resources={r'/*': {'origins': '*'}})
+CORS(app, resources={r"/*": {"origins": "*"}})
+
+# Initialize automatic instrumentation
+FlaskInstrumentor().instrument_app(app)
+RequestsInstrumentor().instrument()
+GrpcInstrumentorClient().instrument()
 
 
-@app.route('/', methods=['GET'])
+@app.route("/", methods=["GET"])
 def index():
     return "Orchestrator is running."
 
 
-@app.route('/health', methods=['GET'])
+@app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
 
@@ -358,75 +452,132 @@ def validate_request(data):
     return None
 
 
-@app.route('/checkout', methods=['POST'])
+@app.route("/checkout", methods=["POST"])
 def checkout():
     """
     Responds with a JSON object containing the order ID, status, and suggested books.
     """
-    try:
-        request_data = request.get_json(force=True, silent=False)
-    except Exception:
-        return error_response(400, "Request body must be valid JSON.")
+    import time as time_module
 
-    validation_error = validate_request(request_data)
-    if validation_error:
-        return error_response(400, validation_error)
+    start_time = time_module.time()
 
-    order_id = str(uuid.uuid4())
-    request_data["orderId"] = order_id
-    logger.info("Accepted checkout request for order_id=%s", order_id)
-    order_json = json.dumps(request_data)
+    # Update pending orders gauge
+    pending_orders_gauge.add(1, {"status": "pending"})
 
-    try:
-        flow_result = run_event_flow(order_id, order_json)
-    except RuntimeError as exc:
-        logger.error("Downstream workflow failure for order_id=%s: %s", order_id, str(exc))
-        return error_response(500, str(exc))
-    except Exception as exc:
-        logger.exception("Unexpected failure for order_id=%s: %s", order_id, str(exc))
-        return error_response(500, f"Unexpected error: {str(exc)}")
+    with tracer.start_as_current_span("checkout_order") as span:
+        span.set_attribute("http.method", "POST")
+        span.set_attribute("http.route", "/checkout")
 
-    response = {
-        "orderId": order_id,
-        "status": flow_result["status"],
-        "suggestedBooks": flow_result["suggested_books"],
-    }
-
-    if flow_result["approved"]:
         try:
-            enqueue_response = enqueue_order(order_id, order_json)
-        except grpc.RpcError as exc:
-            logger.error(
-                "Failed to enqueue approved order_id=%s because queue call failed: %s",
-                order_id,
-                exc.code().name,
-            )
-            return error_response(500, "Order approval succeeded, but enqueue failed.")
+            request_data = request.get_json(force=True, silent=False)
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, "Invalid JSON"))
+            pending_orders_gauge.add(-1, {"status": "pending"})
+            return error_response(400, "Request body must be valid JSON.")
 
-        if not enqueue_response.success:
+        validation_error = validate_request(request_data)
+        if validation_error:
+            span.record_exception(Exception(validation_error))
+            span.set_status(Status(StatusCode.ERROR, validation_error))
+            pending_orders_gauge.add(-1, {"status": "pending"})
+            return error_response(400, validation_error)
+
+        order_id = str(uuid.uuid4())
+        request_data["orderId"] = order_id
+        logger.info("Accepted checkout request for order_id=%s", order_id)
+        order_json = json.dumps(request_data)
+
+        span.set_attribute("order.id", order_id)
+        order_counter.add(1)
+
+        try:
+            flow_result = run_event_flow(order_id, order_json)
+        except RuntimeError as exc:
             logger.error(
-                "Queue rejected approved order_id=%s reason=%s",
-                order_id,
-                enqueue_response.reason,
+                "Downstream workflow failure for order_id=%s: %s", order_id, str(exc)
             )
-            return error_response(500, f"Order approval succeeded, but enqueue failed: {enqueue_response.reason}")
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            pending_orders_gauge.add(-1, {"status": "pending"})
+            order_rejected_counter.add(1)
+            return error_response(500, str(exc))
+        except Exception as exc:
+            logger.exception(
+                "Unexpected failure for order_id=%s: %s", order_id, str(exc)
+            )
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            pending_orders_gauge.add(-1, {"status": "pending"})
+            order_rejected_counter.add(1)
+            return error_response(500, f"Unexpected error: {str(exc)}")
+
+        response = {
+            "orderId": order_id,
+            "status": flow_result["status"],
+            "suggestedBooks": flow_result["suggested_books"],
+        }
+
+        if flow_result["approved"]:
+            order_approved_counter.add(1)
+            span.set_attribute("order.status", "approved")
+
+            try:
+                enqueue_response = enqueue_order(order_id, order_json)
+            except grpc.RpcError as exc:
+                logger.error(
+                    "Failed to enqueue approved order_id=%s because queue call failed: %s",
+                    order_id,
+                    exc.code().name,
+                )
+                span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR, "Enqueue failed"))
+                pending_orders_gauge.add(-1, {"status": "pending"})
+                return error_response(
+                    500, "Order approval succeeded, but enqueue failed."
+                )
+
+            if not enqueue_response.success:
+                logger.error(
+                    "Queue rejected approved order_id=%s reason=%s",
+                    order_id,
+                    enqueue_response.reason,
+                )
+                span.set_status(Status(StatusCode.ERROR, enqueue_response.reason))
+                pending_orders_gauge.add(-1, {"status": "pending"})
+                return error_response(
+                    500,
+                    f"Order approval succeeded, but enqueue failed: {enqueue_response.reason}",
+                )
+
+            logger.info(
+                "Enqueued approved order_id=%s queue_size=%s",
+                order_id,
+                enqueue_response.queue_size,
+            )
+            span.set_attribute("queue.size", enqueue_response.queue_size)
+        else:
+            order_rejected_counter.add(1)
+            span.set_attribute("order.status", "rejected")
+            span.set_attribute("order.reason", flow_result["reason"])
+
+        # Record execution time
+        execution_time_ms = (time_module.time() - start_time) * 1000
+        order_execution_time.record(execution_time_ms)
+        span.set_attribute("execution.time.ms", execution_time_ms)
+
+        pending_orders_gauge.add(-1, {"status": "completed"})
 
         logger.info(
-            "Enqueued approved order_id=%s queue_size=%s",
+            "Returning response for order_id=%s status=%s suggested_books=%s vc=%s",
             order_id,
-            enqueue_response.queue_size,
+            flow_result["status"],
+            len(flow_result["suggested_books"]),
+            clock_to_log(flow_result["vector_clock"]),
         )
 
-    logger.info(
-        "Returning response for order_id=%s status=%s suggested_books=%s vc=%s",
-        order_id,
-        flow_result["status"],
-        len(flow_result["suggested_books"]),
-        clock_to_log(flow_result["vector_clock"]),
-    )
-
-    return jsonify(response)
+        return jsonify(response)
 
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0')
+if __name__ == "__main__":
+    app.run(host="0.0.0.0")

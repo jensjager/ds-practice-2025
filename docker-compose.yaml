@@ -49,7 +49,13 @@ services:
       order_queue:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=3)"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=3)",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -68,7 +74,13 @@ services:
       - ./utils:/app/utils
       - ./order_queue/src:/app/order_queue/src
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost', 50054), 3); s.close()"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s=socket.create_connection(('localhost', 50054), 3); s.close()",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -88,7 +100,13 @@ services:
       - ./utils:/app/utils
       - ./fraud_detection/src:/app/fraud_detection/src
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost', 50051), 3); s.close()"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s=socket.create_connection(('localhost', 50051), 3); s.close()",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -109,7 +127,13 @@ services:
       - ./utils:/app/utils
       - ./transaction_verification/src:/app/transaction_verification/src
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost', 50052), 3); s.close()"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s=socket.create_connection(('localhost', 50052), 3); s.close()",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -129,7 +153,13 @@ services:
       - ./utils:/app/utils
       - ./suggestions/src:/app/suggestions/src
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost', 50053), 3); s.close()"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s=socket.create_connection(('localhost', 50053), 3); s.close()",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -218,7 +248,13 @@ services:
       order_queue:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost', 50055), 3); s.close()"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s=socket.create_connection(('localhost', 50055), 3); s.close()",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -243,3 +279,11 @@ services:
       <<: *order_executor_env
       EXECUTOR_ID: "4"
       EXECUTOR_TARGET: order_executor_4:50055
+  observability:
+    image: grafana/otel-lgtm
+    ports:
+      - "3000:3000"
+      - "4317:4317"
+      - "4318:4318"
+    environment:
+      - OTEL_METRIC_EXPORT_INTERVAL=1000
