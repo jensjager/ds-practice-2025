@@ -109,6 +109,11 @@ class BooksDatabaseServicer(books_database_grpc.BooksDatabaseServicer):
         self.lock = threading.Lock()
         self.temp_updates = {}
 
+        # Initialize stock gauge with current values from store
+        with self.lock:
+            for title, stock in self.store.items():
+                stock_gauge.add(stock, {"book": title})
+
         logger.info(f"Initialized database. Primary: {self.is_primary}")
 
     def _get_stub(self, target):
@@ -122,10 +127,6 @@ class BooksDatabaseServicer(books_database_grpc.BooksDatabaseServicer):
 
             with self.lock:
                 stock = self.store.get(request.title, 0)
-                # Record stock level using add with delta
-                # First reset to 0, then add current value
-                stock_gauge.add(-stock, {"book": request.title})
-                stock_gauge.add(stock, {"book": request.title})
 
             logger.info(f"Read title='{request.title}', stock={stock}")
             db_read_counter.add(1)
@@ -254,6 +255,15 @@ class BooksDatabaseServicer(books_database_grpc.BooksDatabaseServicer):
                         span.record_exception(Exception("Stock mismatch"))
                         db_prepare_counter.add(1, {"status": "failed"})
                         return books_database.PrepareResponse(ready=False)
+                    # Validate new stock is non-negative
+                    if item.new_stock < 0:
+                        logger.warning(
+                            f"Prepare failed: Invalid stock value {item.new_stock} for {item.title}"
+                        )
+                        span.set_status(Status(StatusCode.ERROR, "Invalid stock"))
+                        span.record_exception(Exception("Invalid stock value"))
+                        db_prepare_counter.add(1, {"status": "failed"})
+                        return books_database.PrepareResponse(ready=False)
 
                 # Store tentatively
                 self.temp_updates[request.order_id] = request.items
@@ -269,41 +279,7 @@ class BooksDatabaseServicer(books_database_grpc.BooksDatabaseServicer):
 
             with self.lock:
                 items = self.temp_updates.pop(request.order_id, None)
-                if items:
-                    # Apply updates
-                    for item in items:
-                        old_stock = self.store.get(item.title, 0)
-                        self.store[item.title] = item.new_stock
-                        # Update stock gauge after commit using add with delta
-                        stock_gauge.add(
-                            item.new_stock - old_stock, {"book": item.title}
-                        )
-
-                    # Replicate to backups
-                    for target in self.backup_targets:
-                        stub, channel = self._get_stub(target)
-                        try:
-                            for item in items:
-                                rep_req = books_database.WriteRequest(
-                                    title=item.title,
-                                    new_stock=item.new_stock,
-                                    expected_current_stock=item.expected_current_stock,
-                                    is_replica_update=True,
-                                )
-                                stub.Write(rep_req, timeout=3.0)
-                        except grpc.RpcError as e:
-                            logger.error(
-                                f"Failed to replicate commit to {target}: {e.code().name}"
-                            )
-                            span.record_exception(e)
-                        finally:
-                            channel.close()
-
-                    logger.info(f"Committed transaction for order {request.order_id}")
-                    db_commit_counter.add(1, {"status": "success"})
-                    span.set_attribute("success", True)
-                    return books_database.CommitResponse(success=True)
-                else:
+                if not items:
                     logger.warning(
                         f"Commit failed: transaction not prepared for order {request.order_id}"
                     )
@@ -313,6 +289,74 @@ class BooksDatabaseServicer(books_database_grpc.BooksDatabaseServicer):
                     db_commit_counter.add(1, {"status": "failed"})
                     return books_database.CommitResponse(success=False)
 
+                # Re-validate: check current stock matches expected for all items
+                for item in items:
+                    current_stock = self.store.get(item.title, 0)
+                    if current_stock != item.expected_current_stock:
+                        logger.warning(
+                            f"Commit failed: Concurrent write for {item.title}. Expected {item.expected_current_stock}, got {current_stock}"
+                        )
+                        span.set_status(
+                            Status(StatusCode.ERROR, "Concurrent write during commit")
+                        )
+                        span.record_exception(Exception("Stock mismatch on commit"))
+                        db_commit_counter.add(1, {"status": "failed"})
+                        # Put items back for potential retry
+                        self.temp_updates[request.order_id] = items
+                        return books_database.CommitResponse(success=False)
+
+                # Apply updates
+                for item in items:
+                    old_stock = self.store.get(item.title, 0)
+                    self.store[item.title] = item.new_stock
+                    # Update stock gauge after commit using add with delta
+                    stock_gauge.add(item.new_stock - old_stock, {"book": item.title})
+
+            # Replicate to backups atomically
+            replication_success = True
+            if self.backup_targets:
+                for target in self.backup_targets:
+                    stub, channel = self._get_stub(target)
+                    try:
+                        for item in items:
+                            rep_req = books_database.WriteRequest(
+                                title=item.title,
+                                new_stock=item.new_stock,
+                                expected_current_stock=item.expected_current_stock,
+                                is_replica_update=True,
+                            )
+                            stub.Write(rep_req, timeout=3.0)
+                    except grpc.RpcError as e:
+                        logger.error(
+                            f"Failed to replicate commit to {target}: {e.code().name}"
+                        )
+                        span.record_exception(e)
+                        replication_success = False
+                        # Rollback local changes if replication fails
+                        with self.lock:
+                            for item in items:
+                                self.store[item.title] = item.expected_current_stock
+                                stock_gauge.add(
+                                    item.expected_current_stock - item.new_stock,
+                                    {"book": item.title},
+                                )
+                        break
+                    finally:
+                        channel.close()
+
+            if replication_success:
+                logger.info(f"Committed transaction for order {request.order_id}")
+                db_commit_counter.add(1, {"status": "success"})
+                span.set_attribute("success", True)
+                return books_database.CommitResponse(success=True)
+            else:
+                logger.warning(
+                    f"Commit rolled back for order {request.order_id} due to replication failure"
+                )
+                db_commit_counter.add(1, {"status": "failed"})
+                span.set_status(Status(StatusCode.ERROR, "Replication failed"))
+                return books_database.CommitResponse(success=False)
+
     def Abort(self, request, context):
         with tracer.start_as_current_span("Abort") as span:
             span.set_attribute("order.id", request.order_id)
@@ -321,7 +365,7 @@ class BooksDatabaseServicer(books_database_grpc.BooksDatabaseServicer):
                 self.temp_updates.pop(request.order_id, None)
 
             logger.info(f"Aborted transaction for order {request.order_id}")
-            db_abort_counter.add(1)
+            db_abort_counter.add(1, {"status": "success"})
             span.set_attribute("aborted", True)
             return books_database.AbortResponse(aborted=True)
 

@@ -4,19 +4,19 @@
   "metadata": {
     "name": "ds-book-order-system",
     "namespace": "default",
-    "uid": "528c56b9-ed13-4a93-b7e0-cb0a80f0490c",
-    "resourceVersion": "1779991360987016",
-    "generation": 3,
-    "creationTimestamp": "2026-05-28T17:49:33Z",
+    "uid": "98509fad-09ec-43fa-b21a-2fa41b5a390d",
+    "resourceVersion": "1779993066726990",
+    "generation": 4,
+    "creationTimestamp": "2026-05-28T18:27:45Z",
     "labels": {
-      "grafana.app/deprecatedInternalID": "1910864695083008"
+      "grafana.app/deprecatedInternalID": "1920476289019904"
     },
     "annotations": {
-      "grafana.app/createdBy": "user:dfng4s03x9l34d",
+      "grafana.app/createdBy": "user:ffng88cgc0zk0b",
       "grafana.app/folder": "",
       "grafana.app/saved-from-ui": "Grafana v13.0.1 (a100054f)",
-      "grafana.app/updatedBy": "user:dfng4s03x9l34d",
-      "grafana.app/updatedTimestamp": "2026-05-28T18:02:40Z"
+      "grafana.app/updatedBy": "user:ffng88cgc0zk0b",
+      "grafana.app/updatedTimestamp": "2026-05-28T18:31:06Z"
     }
   },
   "spec": {
@@ -457,7 +457,29 @@
           "data": {
             "kind": "QueryGroup",
             "spec": {
-              "queries": [],
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "prometheus"
+                      },
+                      "spec": {
+                        "editorMode": "builder",
+                        "expr": "books_database_stock_level",
+                        "legendFormat": "__auto",
+                        "range": true
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
               "transformations": [],
               "queryOptions": {}
             }
@@ -538,82 +560,8 @@
                         "name": "prometheus"
                       },
                       "spec": {
-                        "editorMode": "code",
-                        "expr": "rate(books_database_prepares[5m])",
-                        "format": "time_series",
-                        "interval": "",
-                        "intervalFactor": 2,
-                        "legendFormat": "Prepare",
-                        "range": true,
-                        "step": 10
-                      }
-                    },
-                    "refId": "A",
-                    "hidden": false
-                  }
-                },
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "prometheus"
-                      },
-                      "spec": {
-                        "editorMode": "code",
-                        "expr": "rate(books_database_commits[5m])",
-                        "format": "time_series",
-                        "interval": "",
-                        "intervalFactor": 2,
-                        "legendFormat": "Commit",
-                        "step": 10
-                      }
-                    },
-                    "refId": "B",
-                    "hidden": false
-                  }
-                },
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "prometheus"
-                      },
-                      "spec": {
-                        "editorMode": "code",
-                        "expr": "rate(books_database_aborts[5m])",
-                        "format": "time_series",
-                        "interval": "",
-                        "intervalFactor": 2,
-                        "legendFormat": "Abort",
-                        "range": true,
-                        "step": 10
-                      }
-                    },
-                    "refId": "C",
-                    "hidden": false
-                  }
-                },
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "prometheus"
-                      },
-                      "spec": {
                         "editorMode": "builder",
-                        "expr": "rate(books_database_prepares[1m])",
+                        "expr": "books_database_prepares_total",
                         "instant": false,
                         "legendFormat": "__auto",
                         "range": true
@@ -635,33 +583,13 @@
                       },
                       "spec": {
                         "editorMode": "builder",
-                        "expr": "rate(books_database_commits_total[5m])",
+                        "expr": "books_database_commits_total",
                         "instant": false,
                         "legendFormat": "__auto",
                         "range": true
                       }
                     },
                     "refId": "E",
-                    "hidden": true
-                  }
-                },
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "prometheus"
-                      },
-                      "spec": {
-                        "expr": "",
-                        "instant": false,
-                        "range": true
-                      }
-                    },
-                    "refId": "F",
                     "hidden": false
                   }
                 }
